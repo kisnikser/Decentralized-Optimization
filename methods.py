@@ -1,9 +1,11 @@
 # %%
 import numpy as np
+import math
 from scipy.linalg import block_diag
 from numpy.linalg import inv, pinv
 
-class Method:
+# %%
+class Model:
 
     def get_network(self, A):
         self.adjacency_matrix = A
@@ -18,14 +20,9 @@ class Method:
         self.B_array = B_array
         self.b_e = b_e
 
-    def __init__(self, A, R_array, r_array, B_array, b_e):
-        self.get_network(A)
-        self.get_function(R_array, r_array)
-        self.get_constraints(B_array, b_e)
-
     def f_i(self, i, x_i):
         return x_i @ self.R_array[i] @ x_i + self.r_array[i] @ x_i
-
+    
     def parse(self, x):
         n_array = np.array([self.dim_i for _ in range(self.n_agents)])
         cum = [0, *np.cumsum(n_array)]
@@ -33,26 +30,34 @@ class Method:
         for i in range(self.n_agents):
             x_array.append(x[cum[i]:cum[i+1]])
         return np.array(x_array)
-
+    
     def f(self, x):
         x_array = self.parse(x)
         return np.array([self.f_i(i, x_array[i]) for i in range(self.n_agents)]).sum()
+
+# %%
+class Method:
+
+    def __init__(self, model):
+        self.model = model
     
-    def Proj(self, x):
+    @staticmethod
+    def Proj(x):
         y = np.zeros(len(x))
         for i in range(len(x)):
-            if x[i] < -1:
-                y[i] = -1
-            elif -1 <= x[i] <= 1:
+            if x[i] < -100:
+                y[i] = -100
+            elif -100 <= x[i] <= 100:
                 y[i] = x[i]
-            elif x[i] > 1:
-                y[i] = 1
+            elif x[i] > 100:
+                y[i] = 100
         return y
     
     def prox(self, x):
         return self.Proj(x)
 
-    def MetropolisWeights(self, E):
+    @staticmethod
+    def MetropolisWeights(E):
         d = E.sum(axis=1)
         W = np.zeros((E.shape[0], E.shape[1]))
         for i in range(E.shape[0]):
@@ -73,20 +78,20 @@ class Method:
 # %%
 class Alghunaim(Method):
     
-    def __init__(self, A, R_array, r_array, B_array, b_e):
-        super().__init__(A, R_array, r_array, B_array, b_e)
-        self.K = self.n_agents
+    def __init__(self, model):
+        super().__init__(model)
+        self.K = self.model.n_agents
         self.E = self.K
-        self.Q_k = self.dim_i
+        self.Q_k = self.model.dim_i
 
     def J(self, k, w_k):
-        return w_k @ self.R_array[k] @ w_k + self.r_array[k] @ w_k
+        return w_k @ self.model.R_array[k] @ w_k + self.model.r_array[k] @ w_k
     
     def grad_J(self, k, w_k):
-        return 2 * self.R_array[k] @ w_k + self.r_array[k]
+        return 2 * self.model.R_array[k] @ w_k + self.model.r_array[k]
     
     def grad_J_bar(self, w):
-        lst_w_k = self.parse(w)
+        lst_w_k = self.model.parse(w)
         return np.hstack(tuple([self.grad_J(k, lst_w_k[k]) for k in range(self.K)]))
 
     def get_start_point(self, wm1, ym1):
@@ -98,7 +103,7 @@ class Alghunaim(Method):
         self.mu_y = mu_y
 
     def get_B_T_coupled(self):
-        A_I = self.adjacency_matrix + np.identity(self.K)
+        A_I = self.model.adjacency_matrix + np.identity(self.K)
         B_bar_matrix = []
 
         for e in range(self.E):
@@ -107,7 +112,7 @@ class Alghunaim(Method):
                 B = []
                 for k_bar in np.nonzero(A_I[e])[0]:
                     if k in np.nonzero(A_I[e])[0] and k == k_bar:
-                        B.append(self.B_array[e][k].T)
+                        B.append(self.model.B_array[e][k].T)
                     else: 
                         B.append(np.zeros((self.Q_k, 1)))
                 B_bar_array.append(np.hstack(tuple(B)))
@@ -122,9 +127,9 @@ class Alghunaim(Method):
         return np.block(B_bar_matrix_T)
 
     def get_b_coupled(self):
-        A_I = self.adjacency_matrix + np.identity(self.K)
+        A_I = self.model.adjacency_matrix + np.identity(self.K)
         N = [int(A_I.sum(axis=1)[i]) for i in range(self.K)]
-        return np.hstack(tuple([1/N[e]*(np.kron(np.ones(N[e]), self.b_e[e])) for e in range(self.E)]))
+        return np.hstack(tuple([1/N[e]*(np.kron(np.ones(N[e]), self.model.b_e[e])) for e in range(self.E)]))
 
     def get_B_T_uncoupled(self):
         B_bar_matrix = []
@@ -133,7 +138,7 @@ class Alghunaim(Method):
             B = []
             for k_bar in range(self.K):
                 if k in range(self.K) and k == k_bar:
-                    B.append(self.B_array[k].T)
+                    B.append(self.model.B_array[k].T)
                 else: 
                     B.append(np.zeros((self.Q_k, self.K)))
             B_bar_matrix.append(np.hstack(tuple(B)))
@@ -141,7 +146,7 @@ class Alghunaim(Method):
         return np.vstack(B_bar_matrix)
 
     def get_b_uncoupled(self):
-        return 1/self.K*(np.kron(np.ones(self.K), self.b_e))
+        return 1/self.K*(np.kron(np.ones(self.K), self.model.b_e))
 
     def get_B_T(self, coupled=False):
         if coupled == True:
@@ -156,13 +161,13 @@ class Alghunaim(Method):
             return self.get_b_uncoupled()
 
     def get_A_coupled(self):
-        A_I = self.adjacency_matrix + np.identity(self.K)
+        A_I = self.model.adjacency_matrix + np.identity(self.K)
         N = [int(A_I.sum(axis=1)[i]) for i in range(self.K)]
         A_array = []
 
         for e in range(self.E):
             lst_e = np.nonzero(A_I[e])[0]
-            A_e = self.MetropolisWeights(self.adjacency_matrix[np.ix_(lst_e, lst_e)])
+            A_e = self.MetropolisWeights(self.model.adjacency_matrix[np.ix_(lst_e, lst_e)])
             A_array.append(A_e)
 
         A_bar_array = []
@@ -173,7 +178,7 @@ class Alghunaim(Method):
         return block_diag(*A_bar_array)
 
     def get_A_uncoupled(self):
-        A_e = self.MetropolisWeights(self.adjacency_matrix)
+        A_e = self.MetropolisWeights(self.model.adjacency_matrix)
         return np.kron(1/2*(np.identity(self.K) + A_e), np.identity(self.K))
     
     def get_A(self, coupled=False):
@@ -187,7 +192,7 @@ class Alghunaim(Method):
         B = B_T.T
         b = self.get_b(coupled)
         A_bar = self.get_A(coupled)
-        A_I = self.adjacency_matrix + np.identity(self.K)
+        A_I = self.model.adjacency_matrix + np.identity(self.K)
         N = [int(A_I.sum(axis=1)[i]) for i in range(self.K)]
 
         w0 = self.prox(self.wm1 - self.mu_w * self.grad_J_bar(self.wm1) - self.mu_w * B_T @ self.ym1)
@@ -214,31 +219,31 @@ class Alghunaim(Method):
 # %%
 class Huang(Method):
 
-    def __init__(self, A, R_array, r_array, B_array, b_e):
-        super().__init__(A, R_array, r_array, B_array, b_e)
-        self.N = self.n_agents
-        self.m = self.n_agents
-        self.n = self.dim_i * self.N
+    def __init__(self, model):
+        super().__init__(model)
+        self.N = self.model.n_agents
+        self.m = self.model.n_agents
+        self.n = self.model.dim_i * self.N
         
-        degrees = self.adjacency_matrix.sum(axis=1)
+        degrees = self.model.adjacency_matrix.sum(axis=1)
         D = np.diag(degrees)
-        self.L = D - self.adjacency_matrix
+        self.L = D - self.model.adjacency_matrix
 
     def h_i(self, i, x_i):
-        return self.B_array[i] @ x_i - 1/self.N * self.b_e
+        return self.model.B_array[i] @ x_i - 1/self.N * self.model.b_e
     
     def h(self, x):
-        x_array = self.parse(x)
+        x_array = self.model.parse(x)
         return np.array([self.h_i(i, x_array[i]) for i in range(self.N)]).sum(axis=1)
     
     def grad_f_i(self, i, x_i):
-        return 2 * self.R_array[i] @ x_i + self.r_array[i]
+        return 2 * self.model.R_array[i] @ x_i + self.model.r_array[i]
 
     def grad_h_i(self, i, x_i):
-        return self.B_array[i]
+        return self.model.B_array[i]
     
     def grad_f(self, x):
-        x_array = self.parse(x)
+        x_array = self.model.parse(x)
         return np.hstack(tuple([self.grad_f_i(i, x_array[i]) for i in range(self.N)]))
     
     def psi_i(self, i, x_i):
@@ -252,22 +257,22 @@ class Huang(Method):
         return self.grad_h_i(i, x_i)
 
     def grad_psi(self, x):
-        x_array = self.parse(x)
+        x_array = self.model.parse(x)
         return np.hstack(tuple([self.grad_psi_i(i, x_array[i]) for i in range(self.N)]))
 
     def psi_tilde(self, x):
-        x_array = self.parse(x)
+        x_array = self.model.parse(x)
         return np.hstack(tuple([self.psi_i(i, x_array[i]) for i in range(self.N)]))
 
     def grad_psi_tilde(self, x):
-        x_array = self.parse(x)
+        x_array = self.model.parse(x)
         return block_diag(*[self.grad_psi_i(i, x_array[i]) for i in range(self.N)])
     
     def P_Omega_i(self, x_i):
         return self.Proj(x_i)
         
     def P_Omega(self, x):
-        x_array = self.parse(x)
+        x_array = self.model.parse(x)
         return np.hstack(tuple([self.P_Omega_i(x_array[i]) for i in range(self.N)]))
 
     def P_Theta_i(self, lmbd_i):
@@ -355,22 +360,22 @@ class Huang(Method):
 # %%
 class Carli(Method):
 
-    def __init__(self, A, R_array, r_array, B_array, b_e):
-        super().__init__(A, R_array, r_array, B_array, b_e)
+    def __init__(self, model):
+        super().__init__(model)
 
-        self.N = self.n_agents
-        self.H = self.dim_i
-        self.M = self.n_agents
+        self.N = self.model.n_agents
+        self.H = self.model.dim_i
+        self.M = self.model.n_agents
         
-        R = block_diag(*self.R_array)
-        r = np.hstack(tuple(self.r_array))
+        R = block_diag(*self.model.R_array)
+        r = np.hstack(tuple(self.model.r_array))
 
         self.C = R
         self.q = r
 
-        self.A_array = B_array
+        self.A_array = self.model.B_array
         self.A = np.hstack(self.A_array)
-        self.b = b_e
+        self.b = self.model.b_e
 
         self.A_hat = block_diag(*self.A_array)
         self.b_hat = np.kron(np.ones(self.N), self.b)
@@ -400,7 +405,7 @@ class Carli(Method):
         return np.array(Q_array)
 
     def solve(self, alpha, tau):
-        self.P = self.MetropolisWeights(self.adjacency_matrix)
+        self.P = self.MetropolisWeights(self.model.adjacency_matrix)
         self.P_Ntau = np.kron(np.linalg.matrix_power(self.P, tau), np.identity(self.M))
         I_NM = np.identity(self.N * self.M)
         self.Q_array = self.get_Q_array(alpha)
@@ -432,5 +437,92 @@ class Carli(Method):
             k = k + 1
 
         return x_k, l_k
+
+# %%
+class Salim(Method):
+
+    def __init__(self, model):
+        super().__init__(model)
+        self.K = np.hstack(self.model.B_array)
+        self.W = self.K.T @ self.K
+        self.b = self.model.b_e
+        self.d = self.model.dim_i * self.model.n_agents
+        self.p = len(self.model.b_e)
+
+        self.R = block_diag(*self.model.R_array)
+        self.r = np.hstack(tuple(self.model.r_array))
+        
+    def F(self, x):
+        return x @ self.R @ x + self.r @ x
+    
+    def grad_F(self, x):
+        return 2 * self.R @ x
+    
+    def hess_F(self):
+        return 2 * self.R
+    
+    def get_start_point(self, x0):
+        self.x0 = x0
+
+    def get_params(self):
+
+        function_eigenvalues = np.linalg.eigvalsh(self.hess_F())
+        constraints_eigenvalues = np.linalg.eigvalsh(self.W)
+
+        self.L = max(function_eigenvalues)
+        self.mu = min(function_eigenvalues)
+
+        self.lmb1 = constraints_eigenvalues[::-1][0]
+        self.lmb2 = constraints_eigenvalues[::-1][self.p-1]
+
+        self.k = self.L / self.mu
+        self.hi = self.lmb1 / self.lmb2
+
+        self.N = math.ceil(np.sqrt(self.hi))
+        self.tau = min(1, 1/2 * np.sqrt(19/(15 * self.k)))
+
+        self.eta = 1 / (4 * self.tau * self.L)
+        self.theta = 15 / (19 * self.eta)
+        self.alpha = self.mu
+
+    def Chebyshev(self, z0):
+        rho = (self.lmb1 - self.lmb2)**2 / 16
+        nu = (self.lmb1 + self.lmb2) / 2
+            
+        z_k = np.zeros((self.N+1, self.d))
+        z_k[0] = z0
+        gamma = -nu / 2
+        p = -self.K.T @ (self.K @ z_k[0] - self.b) / nu
+        z_k[1] = z_k[0] + p
+        for k in range(1, self.N):
+            beta = rho / gamma
+            gamma = -(nu + beta)
+            p = (self.K.T @ (self.K @ z_k[k] - self.b) + beta * p) / gamma
+            z_k[k+1] = z_k[k] + p
+                
+        return z_k[self.N]
+
+    def solve(self):
+
+        x_k = np.zeros((self.n_iter, self.d))
+        x_k_f = np.zeros((self.n_iter, self.d))
+        u_k = np.zeros((self.n_iter, self.d))
+        
+        x_k[0] = self.x0
+        x_k_f[0] = self.x0
+        u_k[0] = np.zeros(self.d)
+            
+        k = 0
+        
+        while k <= self.n_iter-2:
+            x_g = self.tau * x_k[k] + (1 - self.tau) * x_k_f[k]
+            x_half = 1 / (1 + self.eta * self.alpha) * (x_k[k] - self.eta * (self.grad_F(x_g) - self.alpha * x_g + u_k[k]))
+            r = self.theta * (x_half - self.Chebyshev(x_half))
+            u_k[k+1] = u_k[k] + r
+            x_k[k+1] = x_half - self.eta * 1 / (1 + self.eta * self.alpha) * r
+            x_k_f[k+1] = x_g + 2 * self.tau / (2 - self.tau) * (x_k[k+1] - x_k[k])
+            k += 1
+        
+        return x_k
 
 
