@@ -45,9 +45,9 @@ class Method:
     def Proj(x):
         y = np.zeros(len(x))
         for i in range(len(x)):
-            if x[i] < -100:
-                y[i] = -100
-            elif -100 <= x[i] <= 100:
+            if x[i] < 1:
+                y[i] = 1
+            elif 1 <= x[i] <= 100:
                 y[i] = x[i]
             elif x[i] > 100:
                 y[i] = 100
@@ -78,11 +78,12 @@ class Method:
 # %%
 class Alghunaim(Method):
     
-    def __init__(self, model):
+    def __init__(self, model, constraints):
         super().__init__(model)
         self.K = self.model.n_agents
         self.E = self.K
         self.Q_k = self.model.dim_i
+        self.constraints = constraints
 
     def J(self, k, w_k):
         return w_k @ self.model.R_array[k] @ w_k + self.model.r_array[k] @ w_k
@@ -195,7 +196,11 @@ class Alghunaim(Method):
         A_I = self.model.adjacency_matrix + np.identity(self.K)
         N = [int(A_I.sum(axis=1)[i]) for i in range(self.K)]
 
-        w0 = self.prox(self.wm1 - self.mu_w * self.grad_J_bar(self.wm1) - self.mu_w * B_T @ self.ym1)
+        if self.constraints == True:
+            w0 = self.prox(self.wm1 - self.mu_w * self.grad_J_bar(self.wm1) - self.mu_w * B_T @ self.ym1)
+        else:
+            w0 = self.wm1 - self.mu_w * self.grad_J_bar(self.wm1) - self.mu_w * B_T @ self.ym1
+        
         y0 = self.ym1 + self.mu_y * (B @ w0 - b)
         
         w_i = np.zeros((self.n_iter, self.Q_k * self.K))
@@ -210,9 +215,14 @@ class Alghunaim(Method):
         y_i[0] = self.ym1
         y_i[1] = y0
         
-        for i in range(2, self.n_iter):
-            w_i[i] = self.prox(w_i[i-1] - self.mu_w * self.grad_J_bar(w_i[i-1]) - self.mu_w * B_T @ y_i[i-1])
-            y_i[i] = A_bar @ (2 * y_i[i-1] - y_i[i-2] + self.mu_y * B @ (w_i[i] - w_i[i-1]))
+        if self.constraints == True:
+            for i in range(2, self.n_iter):
+                w_i[i] = self.prox(w_i[i-1] - self.mu_w * self.grad_J_bar(w_i[i-1]) - self.mu_w * B_T @ y_i[i-1])
+                y_i[i] = A_bar @ (2 * y_i[i-1] - y_i[i-2] + self.mu_y * B @ (w_i[i] - w_i[i-1]))
+        else:
+            for i in range(2, self.n_iter):
+                w_i[i] = w_i[i-1] - self.mu_w * self.grad_J_bar(w_i[i-1]) - self.mu_w * B_T @ y_i[i-1]
+                y_i[i] = A_bar @ (2 * y_i[i-1] - y_i[i-2] + self.mu_y * B @ (w_i[i] - w_i[i-1]))
         
         return w_i, y_i
 
@@ -456,7 +466,7 @@ class Salim(Method):
         return x @ self.R @ x + self.r @ x
     
     def grad_F(self, x):
-        return 2 * self.R @ x
+        return 2 * self.R @ x + self.r
     
     def hess_F(self):
         return 2 * self.R
