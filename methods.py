@@ -47,10 +47,10 @@ class Method:
         for i in range(len(x)):
             if x[i] < 1:
                 y[i] = 1
-            elif 1 <= x[i] <= 100:
+            elif 1 <= x[i] <= 10:
                 y[i] = x[i]
-            elif x[i] > 100:
-                y[i] = 100
+            elif x[i] > 10:
+                y[i] = 10
         return y
     
     def prox(self, x):
@@ -533,6 +533,110 @@ class Salim(Method):
             x_k_f[k+1] = x_g + 2 * self.tau / (2 - self.tau) * (x_k[k+1] - x_k[k])
             k += 1
         
+        return x_k
+
+# %%
+class SalimDecentralized(Method):
+
+    def __init__(self, model):
+        super().__init__(model)
+
+        self.decentralizing()
+
+        self.K = np.hstack((self._A, self._W_m))
+        self.W = self.K.T @ self.K
+        self.b = self._b
+        self.d = self.model.dim_i * self.model.n_agents + self._m * self._l
+        self.p = len(self.b)
+
+        self.R = block_diag(*self.model.R_array)
+        self.R = block_diag(self.R, 1e-3 / 2 * np.identity(self._m * self._l))
+
+        self.r = np.hstack(tuple(self.model.r_array))
+        self.r = np.hstack((self.r, np.zeros(self._m * self._l)))
+        
+    def decentralizing(self):
+        self._A = block_diag(*self.model.B_array)
+        self._m = len(self.model.b_e)
+        self._l = len(self.model.B_array)
+        self._b = np.hstack(tuple([self.model.b_e / self._l for _ in range(self._l)]))
+        degrees = self.model.adjacency_matrix.sum(axis=1)
+        D = np.diag(degrees)
+        self._W = D - self.model.adjacency_matrix
+        self._W_array = [block_diag(*[self._W[k] for _ in range(self._m)]) for k in range(self._l)]
+        self._W_m = np.vstack(tuple(self._W_array))
+
+    def F(self, x):
+        return x @ self.R @ x + self.r @ x
+    
+    def grad_F(self, x):
+        return 2 * self.R @ x + self.r
+    
+    def hess_F(self):
+        return 2 * self.R
+    
+    def get_start_point(self, x0):
+        self.x0 = x0
+
+    def get_params(self):
+
+        function_eigenvalues = np.linalg.eigvalsh(self.hess_F())
+        constraints_eigenvalues = np.linalg.eigvalsh(self.W)
+
+        self.L = max(function_eigenvalues)
+        self.mu = min(function_eigenvalues)
+
+        self.lmb1 = constraints_eigenvalues[::-1][0]
+        self.lmb2 = constraints_eigenvalues[::-1][self.p-1]
+
+        self.k = self.L / self.mu
+        self.hi = self.lmb1 / self.lmb2
+
+        self.N = math.ceil(np.sqrt(self.hi))
+        self.tau = min(1, 1/2 * np.sqrt(19/(15 * self.k)))
+
+        self.eta = 1 / (4 * self.tau * self.L)
+        self.theta = 15 / (19 * self.eta)
+        self.alpha = self.mu
+
+    def Chebyshev(self, z0):
+        rho = (self.lmb1 - self.lmb2)**2 / 16
+        nu = (self.lmb1 + self.lmb2) / 2
+            
+        z_k = np.zeros((self.N+1, self.d))
+        z_k[0] = z0
+        gamma = -nu / 2
+        p = -self.K.T @ (self.K @ z_k[0] - self.b) / nu
+        z_k[1] = z_k[0] + p
+        for k in range(1, self.N):
+            beta = rho / gamma
+            gamma = -(nu + beta)
+            p = (self.K.T @ (self.K @ z_k[k] - self.b) + beta * p) / gamma
+            z_k[k+1] = z_k[k] + p
+                
+        return z_k[self.N]
+
+    def solve(self):
+
+        x_k = np.zeros((self.n_iter, self.d))
+        x_k_f = np.zeros((self.n_iter, self.d))
+        u_k = np.zeros((self.n_iter, self.d))
+        
+        x_k[0] = self.x0
+        x_k_f[0] = self.x0
+        u_k[0] = np.zeros(self.d)
+            
+        k = 0
+        
+        while k <= self.n_iter-2:
+            x_g = self.tau * x_k[k] + (1 - self.tau) * x_k_f[k]
+            x_half = 1 / (1 + self.eta * self.alpha) * (x_k[k] - self.eta * (self.grad_F(x_g) - self.alpha * x_g + u_k[k]))
+            r = self.theta * (x_half - self.Chebyshev(x_half))
+            u_k[k+1] = u_k[k] + r
+            x_k[k+1] = x_half - self.eta * 1 / (1 + self.eta * self.alpha) * r
+            x_k_f[k+1] = x_g + 2 * self.tau / (2 - self.tau) * (x_k[k+1] - x_k[k])
+            k += 1
+
         return x_k
 
 
