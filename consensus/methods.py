@@ -3,8 +3,8 @@ import utils
 import scipy.linalg
 import cvxpy as cp
 
-class Model:
-    def __init__(self, nodes, dim, cons_rows=2, mu=1, L=1000, lmaxATA=2, graph_model="ring", edge_prob=None):
+class ModelTimeVarying:
+    def __init__(self, nodes, dim, mu=1, L=1000, graph_model="ring", edge_prob=None):
         self.nodes, self.dim = nodes, dim
         self.mu, self.L = mu, L
         
@@ -18,7 +18,7 @@ class Model:
             self.chi = spectrum.max() / spectrum[1:].min() * 1.01 # for numerical robustness
             print("graph chi:", self.chi)
         elif self.graph_model == "erdos-renyi":
-            self.chi = 10 # some random constant
+            self.chi = 100 # some random constant
         self.get_bW() # check chi
             
         self.C = []  # np.random.random((nodes, dim, dim))
@@ -38,40 +38,12 @@ class Model:
         self.Csum = sum(self.C)
         self.dsum = sum(self.d)
         
-        self.cons_rows = cons_rows
-        
-        lminpATA = 1
-        A = utils.get_matrix(cons_rows, dim, np.linspace(lminpATA, lmaxATA, cons_rows))
-        self.A = A / lmaxATA ** 0.5 
-        self.chitA = lmaxATA / lminpATA
-        print("chitA", self.chitA)
-            
-        s2maxA = 1
-        s2minpA = 1 / self.chitA
-
-        # uncomment this to make Ax = b <=> 0 = 0 and make ADOM_affine equivalent to ADOM
-        # s2maxA = 0
-        # s2minpA = 0 
-        # self.A  = np.zeros(self.A.shape)
-        # self.chitA = lminpATA = lmaxATA = 0
-
-        self.muH = (1 + s2minpA) / self.L
-        self.LH = (1 + s2maxA) / self.mu
-        print(f"muH {self.muH}, LH {self.LH}")
-        
         In = np.identity(self.nodes)
-        self.bA = np.kron(In, self.A)
-        self.b = np.random.random(self.cons_rows) 
-        self.bb = np.hstack([self.b] * self.nodes)
-        
         Id = np.identity(self.dim)
         ones = np.ones((self.nodes, self.nodes))
         self.P = np.kron(In - (ones / self.nodes), Id) # projector on L^\bot
         
         self.f_star, self.x_star = self._get_solution()
-        self.f_star_cons, self.x_star_cons = self._get_cons_solution()
-        # if A = 0, b = 0
-        # self.f_star_cons, self.x_star_cons = self._get_solution()
     
     def split(self, x):
         return x.reshape((self.nodes, self.dim))
@@ -126,7 +98,72 @@ class Model:
             self.bC, self.bd - bu
         )
 
-def ADOM_PLUS(iters: int, model: Model):
+class ModelStatic: # обозначения взяты из статьи Ярмошика 2023 
+    def __init__(self, nodes, dim, mu=1, L=1000, graph_model="grid", edge_prob=None):
+        self.nodes, self.dim = nodes, dim
+        self.mu, self.L = mu, L
+
+        self.kappa = self.L / self.mu
+        
+        self.graph_model = graph_model
+        self.edge_prob = edge_prob
+        self.bW = self.get_bW()
+            
+        self.C = []  # np.random.random((nodes, dim, dim))
+        for i in range(self.nodes):
+            Ci = np.random.random((dim-1, dim)) # mu = 0
+            Ci = Ci.T @ Ci
+            Ci *= (self.L - self.mu) / utils.lambda_max(Ci)
+            Ci += self.mu * np.identity(dim) 
+            self.C.append(Ci)
+        print("mu=", min([utils.lambda_min(Ci) for Ci in self.C]))
+        self.bC = scipy.linalg.block_diag(*self.C)
+
+        # multiply by mu to preserve scaling and numeric stability
+        self.d = [np.random.random(self.dim) * self.mu for _ in range(self.nodes)]
+        self.bd = np.hstack(self.d)
+        
+        self.Csum = sum(self.C)
+        self.dsum = sum(self.d)
+        
+        In = np.identity(self.nodes)
+        Id = np.identity(self.dim)
+        ones = np.ones((self.nodes, self.nodes))
+        self.P = np.kron(In - (ones / self.nodes), Id) # projector on L^\bot
+        
+        self.f_star, self.x_star = self._get_solution()
+    
+    def split(self, x):
+        return x.reshape((self.nodes, self.dim))
+    
+    def get_bW(self):
+        if self.graph_model == "ring":
+            W = utils.get_ring_W(self.nodes)  # graph Laplacian. 
+        elif self.graph_model == "grid":
+            W = utils.get_grid_W(self.nodes)  # graph Laplacian. 
+        elif self.graph_model == "erdos-renyi":
+            W = utils.get_ER_W(self.nodes, self.edge_prob)
+
+        self.chi = utils.lambda_max(W) / utils.lambda_min_plus(W)
+        
+        Id = np.identity(self.dim)
+        self.W = W
+        return np.kron(W, Id)
+        
+    def F(self, bx):
+        return (1 / 2 * bx.T @ self.bC @ bx + self.bd @ bx)
+    
+    def f(self, x):
+        return (1 / 2 * x.T @ self.Csum @ x + self.dsum @ x)
+
+    def grad_F(self, bx):
+        return (self.bC @ bx + self.bd)
+
+    def _get_solution(self):
+        x_star = np.linalg.solve(self.Csum, -self.dsum)
+        return self.f(x_star), x_star
+
+def ADOM_PLUS(iters: int, model: ModelTimeVarying):
     x_f = x = np.zeros(model.nodes * model.dim)
     y_f = y = np.zeros(model.nodes * model.dim)
     z_f = z = np.zeros(model.nodes * model.dim)
@@ -180,19 +217,47 @@ def ADOM_PLUS(iters: int, model: Model):
         dist[i] = np.linalg.norm(x_f.reshape(model.nodes, model.dim) - model.x_star, ord=2, axis=1).max()
     return x_f, y_f, z_f, f_err, cons_err, dist
 
-def OPAPC(iters: int, model: Model):
+def AcceleratedGossip(bW, x, T, c1, c2, c3):
+    a0, a1 = 1, c2
+    x0, x1 = x, c2 * (np.identity(bW.shape[0]) - c3 * bW) @ x
+    for i in range(1, T):
+        a0, a1 = a1, 2 * c2 * a1 - a0
+        x0, x1 = x1, 2 * c2 * ((np.identity(bW.shape[0]) - c3 * bW)) @ x1 - x0
+    return x - x1 / a1
+
+def OPAPC(iters: int, model: ModelStatic):
+
     x_f = x = np.zeros(model.nodes * model.dim)
     y = np.zeros(model.nodes * model.dim)
 
     mu, L = model.mu, model.L
 
-    chi = model.chi
+    kappa, chi = model.kappa, model.chi
 
-    T = np.floor(chi)
+    bW = model.bW
+
+    T = int(np.floor(chi))
     c1 = (np.sqrt(chi) - 1) / (np.sqrt(chi) + 1)
     c2 = (chi + 1) / (chi - 1)
-    c3 = 2 * chi / ((1 + chi) * utils.lambda_max(W))
-    eta = 1 / (4 * tau * L)
-    theta = 1 + c1**(2*T) / (eta * (1 + c1**T)**2)
+    c3 = 2 * chi / ((1 + chi) * utils.lambda_max(bW))
     alpha = mu
     tau = min(1, (1 + c1**T) / (2 * np.sqrt(kappa) * (1 - c1**T)))
+    eta = 1 / (4 * tau * L)
+    theta = 1 + c1**(2*T) / (eta * (1 + c1**T)**2)
+
+    f_err, cons_err, dist = np.zeros(iters), np.zeros(iters), np.zeros(iters)
+
+    for i in range(iters):
+        x_prev = x
+        x_g = tau * x + (1 - tau) * x_f
+        x_temp = (1 + eta * alpha)**(-1) * (x - eta * (model.grad_F(x_g) - alpha * x_g + y))
+        y = y + theta * AcceleratedGossip(bW, x_temp, T, c1, c2, c3)
+        x = (1 + eta * alpha)**(-1) * (x - eta * (model.grad_F(x_g) - alpha * x_g + y))
+        x_f = x_g + 2 * tau / (2 - tau) * (x - x_prev)
+
+        f_err[i] = model.F(x_f) - model.f_star
+        #cons_err[i] = np.linalg.norm(bW @ x_f)
+        cons_err[i] = np.linalg.norm(model.P @ x_f)
+        dist[i] = np.linalg.norm(x_f.reshape(model.nodes, model.dim) - model.x_star, ord=2, axis=1).max()
+
+    return x_f, f_err, cons_err, dist

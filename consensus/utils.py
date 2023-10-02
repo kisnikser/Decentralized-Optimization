@@ -38,6 +38,16 @@ def get_ring_W(nodes: int) -> np.ndarray:
     W = np.array([np.roll(w1, i) for i in range(nodes)])
     return W
 
+def get_grid_W(nodes: int) -> np.ndarray:
+    """Returns Laplacian of the grid graph"""
+    import networkx as nx
+
+    shape = int(nodes ** (1/2))
+    graph = nx.grid_graph(dim=(shape, shape))
+    M = nx.to_numpy_array(graph)
+    D = np.diag(np.sum(M, axis=1))
+    W = D - M  # Laplacian
+    return W
 
 def get_ER_W(nodes: int, p: float) -> np.ndarray:
     """Returns Laplacian of a connected Erdos-Renyi graph"""
@@ -90,4 +100,3 @@ def test_ER():
             assert np.all(W.T == W)
             assert np.all(W @ np.ones(n) == np.zeros(n))
             assert np.all((W >= 0) | (W == -1))
-
