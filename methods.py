@@ -550,7 +550,8 @@ class SalimDecentralized(Method):
         self.p = len(self.b)
 
         self.R = block_diag(*self.model.R_array)
-        self.R = block_diag(self.R, 1e-3 / 2 * np.identity(self._m * self._l))
+        #self.R = block_diag(self.R, 1e-3 / 2 * np.identity(self._m * self._l))
+        self.R = block_diag(self.R, np.zeros((self._m * self._l, self._m * self._l)))
 
         self.r = np.hstack(tuple(self.model.r_array))
         self.r = np.hstack((self.r, np.zeros(self._m * self._l)))
@@ -578,13 +579,18 @@ class SalimDecentralized(Method):
     def get_start_point(self, x0):
         self.x0 = x0
 
-    def get_params(self):
+    def get_params(self, mu=None):
 
         function_eigenvalues = np.linalg.eigvalsh(self.hess_F())
         constraints_eigenvalues = np.linalg.eigvalsh(self.W)
 
         self.L = max(function_eigenvalues)
-        self.mu = min(function_eigenvalues)
+        #self.mu = min(function_eigenvalues)
+
+        if mu is None:
+            self.mu = min(function_eigenvalues[function_eigenvalues > 0])
+        else:
+            self.mu = mu
 
         self.lmb1 = constraints_eigenvalues[::-1][0]
         self.lmb2 = constraints_eigenvalues[::-1][self.p-1]
