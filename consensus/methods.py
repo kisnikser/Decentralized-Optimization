@@ -10,6 +10,8 @@ class ModelTimeVarying:
         
         self.graph_model = graph_model
         self.edge_prob = edge_prob
+
+        self.static = False
         
         if self.graph_model == "ring":
             k = np.arange(0, self.nodes // 2 + 1)
@@ -109,6 +111,8 @@ class ModelStatic: # обозначения взяты из статьи Ярм�
         self.edge_prob = edge_prob
         self.bW = self.get_bW()
             
+        self.static = True
+
         self.C = []  # np.random.random((nodes, dim, dim))
         for i in range(self.nodes):
             Ci = np.random.random((dim-1, dim)) # mu = 0
@@ -163,7 +167,7 @@ class ModelStatic: # обозначения взяты из статьи Ярм�
         x_star = np.linalg.solve(self.Csum, -self.dsum)
         return self.f(x_star), x_star
 
-def ADOM_PLUS(iters: int, model: ModelTimeVarying):
+def ADOM_PLUS(iters: int, model: ModelTimeVarying or ModelStatic):
     x_f = x = np.zeros(model.nodes * model.dim)
     y_f = y = np.zeros(model.nodes * model.dim)
     z_f = z = np.zeros(model.nodes * model.dim)
@@ -172,6 +176,10 @@ def ADOM_PLUS(iters: int, model: ModelTimeVarying):
     mu, L = model.mu, model.L
 
     chi = model.chi
+
+    if model.static == True:
+        bW = model.get_bW()
+        bW /= utils.lambda_max(bW)
 
     tau_2 = (mu / L) ** 0.5
     tau_1 = (1 / tau_2 + 0.5) ** -1
@@ -189,7 +197,8 @@ def ADOM_PLUS(iters: int, model: ModelTimeVarying):
     f_err, cons_err, dist = np.zeros(iters), np.zeros(iters), np.zeros(iters)
 
     for i in range(iters):
-        bW = model.get_bW()
+        if model.static == False:
+            bW = model.get_bW()
         x_g = tau_1 * x + (1 - tau_1) * x_f
         df = model.grad_F(x_g)
         y_g = sigma_1 * y + (1 - sigma_1) * y_f
@@ -250,9 +259,10 @@ def OPAPC(iters: int, model: ModelStatic):
     for i in range(iters):
         x_prev = x
         x_g = tau * x + (1 - tau) * x_f
-        x_temp = (1 + eta * alpha)**(-1) * (x - eta * (model.grad_F(x_g) - alpha * x_g + y))
+        df = model.grad_F(x_g)
+        x_temp = (1 + eta * alpha)**(-1) * (x - eta * (df - alpha * x_g + y))
         y = y + theta * AcceleratedGossip(bW, x_temp, T, c1, c2, c3)
-        x = (1 + eta * alpha)**(-1) * (x - eta * (model.grad_F(x_g) - alpha * x_g + y))
+        x = (1 + eta * alpha)**(-1) * (x - eta * (df - alpha * x_g + y))
         x_f = x_g + 2 * tau / (2 - tau) * (x - x_prev)
 
         f_err[i] = model.F(x_f) - model.f_star
