@@ -65,7 +65,7 @@ class Model:
     @property
     def nu(self) -> float:
         if self._nu is None:
-            self._nu = np.linalg.eigvalsh(self.hess_F())[0] # nu = mu_F
+            self._nu = utils.lambda_min(self.hess_F()) # nu = mu_F
         return self._nu
             
             
@@ -76,10 +76,11 @@ class Model:
             mu: float - Strongly convexity constant of the augmented function.
         """
         if self._mu is None:
-            f_eigvals = np.linalg.eigvalsh(self.hess_F())
-            mu_F = f_eigvals[0] # minimum eigenvalue of function F(x)
+            mu_F = utils.lambda_min(self.hess_F()) # minimum eigenvalue of function F(x)
             mu_Phi = mu_F + self.nu # minimum eigenvalue of function Phi(x, z) >= mu_F + nu
-            s2min = np.linalg.eigvals(self.bB.T @ self.bB)[0] # squared minimum singular value of bB
+            #_, s, _ = np.linalg.svd(self.bB) # singular values of bB
+            #s2min = (s**2)[-1] # squared minimum singular value of bB
+            s2min = utils.lambda_min_plus(self.bB.T @ self.bB) # squared minimum singular value of bB
             mu_tildeF = mu_Phi * s2min # mu_tildeF >= mu_Phi * sigma^2_min(bB)
             self._mu = mu_tildeF
         return self._mu
@@ -92,10 +93,11 @@ class Model:
             L: float - gradient Lipschitz constant of the augmented function.
         """
         if self._L is None:
-            f_eigvals = np.linalg.eigvalsh(self.hess_F())
-            L_F = f_eigvals[-1] # maximum eigenvalue of function F(x)
+            L_F = utils.lambda_max(self.hess_F()) # maximum eigenvalue of function F(x)
             L_Phi = L_F + self.nu # maximum eigenvalue of function Phi(x, z) <= L_F + nu
-            s2max = np.linalg.eigvals(self.bB.T @ self.bB)[-1] # squared maximum singular value of bB
+            #_, s, _ = np.linalg.svd(self.bB) # singular values of bB
+            #s2max = (s**2)[0] # squared maximum singular value of bB
+            s2max = utils.lambda_max(self.bB.T @ self.bB) # squared maximum singular value of bB
             L_tildeF = L_Phi * s2max # L_tildeF <= L_Phi * sigma^2_max(B)
             self._L = L_tildeF
         return self._L
@@ -170,36 +172,6 @@ class Model:
             Function hessian at point bx.
         """
         raise NotImplementedError
-    
-    
-    def get_mu(self, mu: float = None):
-        """
-        Args:
-            mu: float = None - Default value for strongly convexity constant.
-        Returns:
-            mu: float - Strongly convexity constant.
-        """
-        f_eigvals = np.linalg.eigvalsh(self.hess_F())
-        mu_F = f_eigvals[0] # minimum eigenvalue of function F(x)
-        mu_Phi = mu_F + self.nu # minimum eigenvalue of function Phi(x, z) >= mu_F + nu
-        s2min = np.linalg.eigvalsh(self.bB.T @ self.bB)[0] # squared minimum singular value of bB
-        mu_tildeF = mu_Phi * s2min # mu_tildeF >= mu_Phi * sigma^2_min(bB)
-        return mu_tildeF
-
-
-    def get_L(self, L: float = None):
-        """
-        Args:
-            L: float = None - Default value for gradient Lipschitz constant L.
-        Returns:
-            L: float - gradient Lipschitz constant.
-        """
-        f_eigvals = np.linalg.eigvalsh(self.hess_F())
-        L_F = f_eigvals[-1] # maximum eigenvalue of function F(x)
-        L_Phi = L_F + self.nu # maximum eigenvalue of function Phi(x, z) <= L_F + nu
-        s2max = np.linalg.eigvalsh(self.bB.T @ self.bB)[-1] # squared maximum singular value of bB
-        L_tildeF = L_Phi * s2max # L_tildeF <= L_Phi * sigma^2_max(B)
-        return L_tildeF
     
     
     def _split_vector(self, bx):

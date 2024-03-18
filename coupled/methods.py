@@ -17,9 +17,10 @@ def intermediate(num_steps: int,
         params: Dict[str, float] = None - Algorithm parameters.
     Returns:
         x_f: float - Solution.
-        x_err: float - Distance to the actual solution.
-        F_err: float - Function error.
-        cons_err: float - Constraints error.
+        x_err: np.ndarray - Sequence of distances to the actual solution.
+        F_err: np.ndarray - Sequence of function error.
+        cons_err: np.ndarray - Sequence of constraints error.
+        primal_dual_err: np.ndarray - Sequence of primal-dual optimality condition error.
     """
 
     # set variables to the paper notation
@@ -33,9 +34,9 @@ def intermediate(num_steps: int,
     lambda2 = utils.lambda_min_plus(W) # can be chosen as 0 < lambda2 <= lambda_min_plus
     chi = lambda1 / lambda2 # condition number of the W = K.T @ K
     params = {} if params is None else params
-    tau = params.get('tau', min(1 - 1e-6, 1/2 * np.sqrt(chi/model.kappa)))
-    assert tau > 0, "The parameter tau must be greater than 0"
-    assert tau < 1, "The parameter tau must be less than 1"
+    tau = params.get('tau', min(1, 1/2 * np.sqrt(chi/model.kappa)))
+    assert tau >= 0, "The parameter tau must be greater than 0"
+    assert tau <= 1, "The parameter tau must be less than 1"
     eta = params.get('eta', 1 / (4*tau*model.L))
     theta = params.get('theta', 1 / (eta*lambda1))
     alpha = params.get('alpha', model.mu)
@@ -47,13 +48,14 @@ def intermediate(num_steps: int,
     y = np.zeros(model.n * model.m)
     
     # get CVXPY solution
-    xz_star, F_star = model.augmented_solution
+    xz_star, F_star = model.solution
     x_star = xz_star[:model.dim]
     
     # logging
     x_err = np.zeros(num_steps) # distance
     F_err = np.zeros(num_steps) # function error
     cons_err = np.zeros(num_steps) # constraints error
+    primal_dual_err = np.zeros(num_steps) # primal-dual optimality condition error
     
     for i in range(num_steps):
         xz_prev = xz # previous point
@@ -70,8 +72,9 @@ def intermediate(num_steps: int,
         x_err[i] = np.linalg.norm(x_f - x_star) # ||x_f - x*||_2
         F_err[i] = model.tildeF(xz_f) - F_star # \tilde{F}(xz_f) - \tilde{F}*
         cons_err[i] = np.linalg.norm(K @ xz_f - b) # ||K @ xz_f - b||_2
+        primal_dual_err[i] = np.linalg.norm(K.T @ y + model.grad_tildeF(xz_f))
         
-    return x_f, x_err, F_err, cons_err  
+    return x_f, x_err, F_err, cons_err, primal_dual_err
 
 
 ###################################################################################################
@@ -142,9 +145,9 @@ def salim(num_steps: int,
     lambda2 = utils.lambda_min_plus(W) # can be chosen as 0 < lambda2 <= lambda_min_plus
     chi = lambda1 / lambda2 # condition number of the W = K.T @ K
     params = {} if params is None else params
-    tau = params.get('tau', min(1 - 1e-6, 1/2 * np.sqrt(19/(15*model.kappa))))
-    assert tau > 0, "The parameter tau must be greater than 0"
-    assert tau < 1, "The parameter tau must be less than 1"
+    tau = params.get('tau', min(1, 1/2 * np.sqrt(19/(15*model.kappa))))
+    assert tau >= 0, "The parameter tau must be greater than 0"
+    assert tau <= 1, "The parameter tau must be less than 1"
     eta = params.get('eta', 1 / (4*tau*model.L))
     theta = params.get('theta', 15 / (19*eta))
     alpha = params.get('alpha', model.mu)
@@ -157,7 +160,7 @@ def salim(num_steps: int,
     u = np.zeros(model.dim + model.n * model.m)
     
     # get CVXPY solution
-    xz_star, F_star = model.augmented_solution
+    xz_star, F_star = model.solution
     x_star = xz_star[:model.dim]
     
     # logging
