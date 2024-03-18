@@ -68,7 +68,7 @@ def intermediate(num_steps: int,
         # add values to the logs
         x_f = xz_f[:model.dim]
         x_err[i] = np.linalg.norm(x_f - x_star) # ||x_f - x*||_2
-        F_err[i] = model.tildeF(xz_f) - F_star # F(x_f) - F*
+        F_err[i] = model.tildeF(xz_f) - F_star # \tilde{F}(xz_f) - \tilde{F}*
         cons_err[i] = np.linalg.norm(K @ xz_f - b) # ||K @ xz_f - b||_2
         
     return x_f, x_err, F_err, cons_err  
@@ -77,12 +77,12 @@ def intermediate(num_steps: int,
 ###################################################################################################
 
 
-def chebyshev(z, K, b, N, lambda1, lambda2):
+def chebyshev(z_0, K, b, N, lambda1, lambda2):
     """
     Chebyshev iteration.
     
     Args:
-        z: np.ndarray - Initial point.
+        z_0: np.ndarray - Initial point.
         K: np.ndarray - Matrix K (see notation in paper).
         b: np.ndarray - Vector b (see notation in paper).
         N: int - Number of steps.
@@ -98,8 +98,8 @@ def chebyshev(z, K, b, N, lambda1, lambda2):
     nu = (lambda1 + lambda2) / 2
     
     gamma = - nu / 2
-    p = - K.T @ (K @ z - b) / nu
-    z = z + p
+    p = - K.T @ (K @ z_0 - b) / nu
+    z = z_0 + p
         
     for _ in range(1, N):
         beta = rho / gamma
@@ -179,7 +179,7 @@ def salim(num_steps: int,
         # add values to the logs
         x_f = xz_f[:model.dim]
         x_err[i] = np.linalg.norm(x_f - x_star) # ||x_f - x*||_2
-        F_err[i] = model.tildeF(xz_f) - F_star # F(x_f) - F*
-        cons_err[i] = np.linalg.norm(K @ xz_f - b) # ||Kx_f - b||_2
+        F_err[i] = model.tildeF(xz_f) - F_star # \tilde{F}(x_f) - \tilde{F}*
+        cons_err[i] = np.linalg.norm(K @ xz_f - b) # ||K @ xz_f - b||_2
         
     return x_f, x_err, F_err, cons_err  
