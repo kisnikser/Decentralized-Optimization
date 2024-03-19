@@ -81,6 +81,7 @@ class Model:
             #_, s, _ = np.linalg.svd(self.bB) # singular values of bB
             #s2min = (s**2)[-1] # squared minimum singular value of bB
             s2min = utils.lambda_min_plus(self.bB.T @ self.bB) # squared minimum singular value of bB
+            #s2min = np.linalg.eigvals(self.bB.T @ self.bB)[0]
             mu_tildeF = mu_Phi * s2min # mu_tildeF >= mu_Phi * sigma^2_min(bB)
             self._mu = mu_tildeF
         return self._mu
@@ -98,6 +99,7 @@ class Model:
             #_, s, _ = np.linalg.svd(self.bB) # singular values of bB
             #s2max = (s**2)[0] # squared maximum singular value of bB
             s2max = utils.lambda_max(self.bB.T @ self.bB) # squared maximum singular value of bB
+            #s2max = np.linalg.eigvals(self.bB.T @ self.bB)[-1]
             L_tildeF = L_Phi * s2max # L_tildeF <= L_Phi * sigma^2_max(B)
             self._L = L_tildeF
         return self._L
