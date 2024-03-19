@@ -109,3 +109,38 @@ def plot_logs(x_err, F_err, cons_err, title):
     plt.suptitle(title, fontsize=24)
     plt.tight_layout()
     plt.show()
+    
+    
+def plot_logs_pd(x_err, F_err, cons_err, primal_dual_error, title):
+    """
+    Plot 4 graphs: primal variable error, function error, constraints error, primal-dual error.
+    """
+    fig, ax = plt.subplots(2, 2, figsize=(11, 9))
+
+    ax[0][0].plot(x_err)
+    ax[0][0].set_yscale('log')
+    ax[0][0].set_xlabel("Iterarion number")
+    ax[0][0].set_ylabel(r"$\| \mathbf{x}^k - \mathbf{x}^* \|_2$")
+    ax[0][0].set_title("Primal variable error")
+
+    ax[0][1].plot(F_err)
+    ax[0][1].set_yscale('log')
+    ax[0][1].set_xlabel("Iterarion number")
+    ax[0][1].set_ylabel(r"$\tilde{F}(\mathbf{x}^k) - \tilde{F}^*$")
+    ax[0][1].set_title("Function error")
+
+    ax[1][0].plot(cons_err)
+    ax[1][0].set_yscale('log')
+    ax[1][0].set_xlabel("Iterarion number")
+    ax[1][0].set_ylabel(r"$\| \mathbf{A}' \mathbf{x}^k + \mathbf{W} \mathbf{z}^k - \mathbf{b}' \|_2$")
+    ax[1][0].set_title("Constraints error")
+    
+    ax[1][1].plot(primal_dual_error)
+    ax[1][1].set_yscale('log')
+    ax[1][1].set_xlabel("Iterarion number")
+    ax[1][1].set_ylabel(r"$\| K^\top \mathbf{y}^k + \nabla \tilde{F}(\mathbf{x}^k) \|_2$")
+    ax[1][1].set_title("Primal-Dual error")
+
+    plt.suptitle(title, fontsize=24)
+    plt.tight_layout()
+    plt.show()
