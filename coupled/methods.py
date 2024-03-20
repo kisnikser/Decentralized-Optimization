@@ -235,18 +235,6 @@ def get_argmin_DPMM(x_k: np.ndarray,
             
         sol = np.array(sol)
         
-    elif mode == 'cvxpy':
-        x = cp.Variable(model.dim)
-        objective = cp.Minimize(
-            1/2 * cp.sum_squares(model.bC @ x - model.bd) 
-            + model.theta/2 * cp.sum_squares(x)
-            + (W @ lmbd_k).T @ A_d @ x
-            + c/2 * cp.sum_squares(A_d @ (x - x_k) + W @ d_k)
-        )
-        prob = cp.Problem(objective)
-        prob.solve()
-        sol = x.value
-        
     else:
         raise NotImplementedError
     
