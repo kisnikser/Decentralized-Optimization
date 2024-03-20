@@ -1,10 +1,12 @@
 import numpy as np
-from models import Model
+import cvxpy as cp
+import scipy as sp
+from models import Model, ExampleModel
 from typing import Dict
 import utils
 
 def intermediate(num_steps: int, 
-                 model: Model, 
+                 model: ExampleModel, 
                  params: Dict[str, float] = None):
     """
     Intermediate algorithm from the paper 
@@ -13,7 +15,7 @@ def intermediate(num_steps: int,
     
     Args:
         num_steps: int - Number of optimizer steps.
-        model: Model - Model with oracle, which gives F, grad_F, etc.
+        model: ExampleModel - Model with oracle, which gives F, grad_F, etc.
         params: Dict[str, float] = None - Algorithm parameters.
     Returns:
         x_f: float - Solution.
@@ -22,7 +24,6 @@ def intermediate(num_steps: int,
         cons_err: np.ndarray - Sequence of constraints error.
         primal_dual_err: np.ndarray - Sequence of primal-dual optimality condition error.
     """
-
     # set variables to the paper notation
     # "An Optimal Algorithm for Strongly Convex Minimization under Affine Constraints", 2022
     K = np.hstack((model.bA_prime, model.bW))
@@ -69,8 +70,8 @@ def intermediate(num_steps: int,
         
         # add values to the logs
         x_f = xz_f[:model.dim]
-        x_err[i] = np.linalg.norm(x_f - x_star) # ||x_f - x*||_2
-        F_err[i] = model.tildeF(xz_f) - F_star # \tilde{F}(xz_f) - \tilde{F}*
+        x_err[i] = np.linalg.norm(x_f - x_star)**2 # ||x_f - x*||_2^2
+        F_err[i] = abs(model.tildeF(xz_f) - F_star) # |\tilde{F}(xz_f) - \tilde{F}*|
         cons_err[i] = np.linalg.norm(K @ xz_f - b) # ||K @ xz_f - b||_2
         primal_dual_err[i] = np.linalg.norm(K.T @ y + model.grad_tildeF(xz_f))
         
@@ -112,12 +113,10 @@ def chebyshev(z_0, K, b, N, lambda1, lambda2):
             
     return z
 
-
-###################################################################################################
-
+#--------------------------------------------------------------------------------------------------
 
 def salim(num_steps: int, 
-          model: Model, 
+          model: ExampleModel, 
           params: Dict[str, float] = None):
     """
     Proposed algorithm 1 from the paper 
@@ -125,7 +124,7 @@ def salim(num_steps: int,
     
     Args:
         num_steps: int - Number of optimizer steps.
-        model: Model - Model with oracle, which gives F, grad_F, etc.
+        model: ExampleModel - Model with oracle, which gives F, grad_F, etc.
         params: Dict[str, float] = None - Algorithm parameters.
     Returns:
         x_f: float - Solution.
@@ -133,7 +132,6 @@ def salim(num_steps: int,
         F_err: float - Function error.
         cons_err: float - Constraints error.
     """
-
     # set variables to the paper notation
     # "An Optimal Algorithm for Strongly Convex Minimization under Affine Constraints", 2022
     K = np.hstack((model.bA_prime, model.bW))
@@ -181,8 +179,265 @@ def salim(num_steps: int,
         
         # add values to the logs
         x_f = xz_f[:model.dim]
-        x_err[i] = np.linalg.norm(x_f - x_star) # ||x_f - x*||_2
-        F_err[i] = model.tildeF(xz_f) - F_star # \tilde{F}(x_f) - \tilde{F}*
+        x_err[i] = np.linalg.norm(x_f - x_star)**2 # ||x_f - x*||_2^2
+        F_err[i] = abs(model.tildeF(xz_f) - F_star) # |\tilde{F}(x_f) - \tilde{F}*|
         cons_err[i] = np.linalg.norm(K @ xz_f - b) # ||K @ xz_f - b||_2
         
     return x_f, x_err, F_err, cons_err  
+
+
+###################################################################################################
+
+
+def get_argmin_DPMM(x_k: np.ndarray,
+                    y: np.ndarray,
+                    alpha: np.ndarray,
+                    gamma: np.ndarray,
+                    model: Model,
+                    mode: str = 'newton'):
+    """
+    Solve argmin subproblem in DPMM for our Example problem.
+    As we have quadratic problem, we do just one step on Newton method.
+    Also we can solve it using CVXPY.
+    
+    Args:
+        x_k: np.ndarray - Value of primal variable vector x from previous step.
+        y: np.ndarray - Value of vector y from previous step.
+        alpha: np.ndarray - Vector of parameters alpha.
+        gamma: np.ndarray - Vector of parameters gamma.
+        model: Model - Model with oracle, which gives F, grad_F, etc.
+        mode: str = 'newton' - Use newton or CVXPY.
+    Returns:
+        sol: np.ndarray - Solution for argmin subproblem.
+    """
+    x_k_array = model._split_vector(x_k)
+    y_array = np.split(y, np.cumsum([model.m for _ in range(model.n)])[:-1])
+    sol = []
+
+    if mode == 'newton':
+        for i in range(model.n):
+            # calculate gradient function
+            grad = lambda x: (
+                model.C[i].T @ model.C[i] @ x - model.C[i].T @ model.d[i] + model.theta * x
+                + model.A[i].T @ (y_array[i] + gamma[i] * (model.A[i] @ x - model.b[i]))
+                + 1 / alpha[i] * (x - x_k_array[i])
+            )
+            
+            # calculate hessian matrix
+            hess = lambda x: (
+                model.C[i].T @ model.C[i] + model.theta * np.identity(model.dims[i])
+                + gamma[i] * model.A[i].T @ model.A[i]
+                + 1 / alpha[i] * np.identity(model.dims[i])
+            ) 
+            
+            # get a solution by one newton step
+            sol.extend(x_k_array[i] - np.linalg.inv(hess(x_k_array[i])) @ grad(x_k_array[i]))
+            
+        sol = np.array(sol)
+        
+    elif mode == 'cvxpy':
+        x = cp.Variable(model.dim)
+        objective = cp.Minimize(
+            1/2 * cp.sum_squares(model.bC @ x - model.bd) 
+            + model.theta/2 * cp.sum_squares(x)
+            + (W @ lmbd_k).T @ A_d @ x
+            + c/2 * cp.sum_squares(A_d @ (x - x_k) + W @ d_k)
+        )
+        prob = cp.Problem(objective)
+        prob.solve()
+        sol = x.value
+        
+    else:
+        raise NotImplementedError
+    
+    return sol
+
+
+#--------------------------------------------------------------------------------------------------
+
+
+def DPMM(num_steps: int, 
+         model: ExampleModel, 
+         params: Dict[str, float] = None):
+    """
+    Decentralized Proximal Method of Multipliers (DPMM) from the paper
+    "Decentralized Proximal Method of Multipliers for Convex Optimization with Coupled Constraints", 2023.
+    
+    Args:
+        num_steps: int - Number of optimizer steps.
+        model: ExampleModel - Model with oracle, which gives F, grad_F, etc.
+        params: Dict[str, float] = None - Algorithm parameters.
+    Returns:
+        x_f: float - Solution.
+        x_err: float - Distance to the actual solution.
+        F_err: float - Function error.
+        cons_err: float - Constraints error.
+    """
+    # set variables to the paper notation
+    I_n = np.identity(model.dim)
+    bL = model.bW
+    G_d = lambda x: model.bA_prime @ x - model.bb_prime
+    
+    # set algorithm parameters
+    params = {} if params is None else params
+    
+    theta = params.get('theta', np.ones(model.n))
+    assert np.all(theta > 0) and np.all(theta < 2), "Parameter theta must be greater than 0 and less than 2"
+    Theta = sp.linalg.block_diag(*[theta[i] * np.identity(model.dims[i]) for i in range(model.n)])
+    
+    alpha = params.get('alpha', np.ones(model.n))
+    assert np.all(alpha > 0), "Parameter alpha must be greater than 0"
+    #Upsilon = sp.linalg.block_diag(*[alpha[i] * np.identity(model.dims[i]) for i in range(model.n)])
+    
+    gamma = params.get('gamma', np.ones(model.n))
+    assert np.all(gamma > 0), "Parameter gamma must be greater than 0"
+    Gamma = sp.linalg.block_diag(*[gamma[i] * np.identity(model.m) for i in range(model.n)])
+    
+    beta = params.get('beta', min(1 / (gamma * utils.lambda_max(bL))) / 2)
+    assert beta > 0 and beta < min(1 / (gamma * utils.lambda_max(bL))), "Wrong parameter beta"
+    
+    # set the initial point
+    x = np.zeros(model.dim)
+    y = np.zeros(model.n * model.m)
+    Lambda = np.zeros(model.n * model.m)
+    
+    # get CVXPY solution
+    x_star, F_star = model.solution_initial
+    
+    # logging
+    x_err = np.zeros(num_steps) # distance
+    F_err = np.zeros(num_steps) # function error
+    cons_err = np.zeros(num_steps) # constraints error
+    
+    for i in range(num_steps):
+        # algorithm step
+        x_hat = get_argmin_DPMM(x, y - Gamma @ Lambda, alpha, gamma, model, mode='newton')
+        y_hat = y - Gamma @ Lambda + Gamma @ G_d(x_hat)
+        x = (I_n - Theta) @ x + Theta @ x_hat
+        Lambda_prev = Lambda
+        Lambda = Lambda_prev + beta * bL @ y_hat
+        y = y_hat + Gamma @ (Lambda_prev - Lambda)
+        
+        # add values to the logs
+        x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
+        F_err[i] = abs(model.F(x) - F_star) # |F(x) - F*|
+        cons_err[i] = np.linalg.norm(model.bA @ x - model.bb) # ||bA @ x - bb||_2
+        
+    return x, x_err, F_err, cons_err
+
+
+###################################################################################################
+
+
+def get_argmin_TrackingADMM(x_k: np.ndarray,
+                            d_k: np.ndarray,
+                            lmbd_k: np.ndarray,
+                            c: float,
+                            model: Model,
+                            mode: str = 'newton'):
+    """
+    Solve argmin subproblem in Tracking-ADMM for our Example problem.
+    As we have quadratic problem, we do just one step on Newton method.
+    Also we can solve it using CVXPY.
+    
+    Args:
+        x_k: np.ndarray - Value of primal variable vector x from previous step.
+        d_k: np.ndarray - Value of vector d from previous step.
+        lmbd_k: np.ndarray - Value of vector lmbd from previous step.
+        c: float - Parameter for augmentation.
+        model: Model - Model with oracle, which gives F, grad_F, etc.
+        mode: str = 'newton' - Use newton or CVXPY.
+    Returns:
+        sol: np.ndarray - Solution for argmin subproblem.
+    """
+    # set variables to the paper notation
+    W = np.kron(model.mixing_matrix, np.identity(model.m))
+    A_d = model.bA_prime
+    
+    if mode == 'newton':
+        # calculate gradient function
+        grad = lambda x: (
+            model.grad_F(x)
+            + A_d.T @ W @ lmbd_k
+            + c * A_d.T @ (A_d @ (x - x_k) + W @ d_k)
+        )
+        
+        # calculate hessian matrix
+        hess = lambda x: model.hess_F(x) + c * A_d.T @ A_d
+
+        # get a solution by one newton step
+        sol = x_k - np.linalg.inv(hess(x_k)) @ grad(x_k)
+        
+    elif mode == 'cvxpy':
+        x = cp.Variable(model.dim)
+        objective = cp.Minimize(
+            1/2 * cp.sum_squares(model.bC @ x - model.bd) 
+            + model.theta/2 * cp.sum_squares(x)
+            + (W @ lmbd_k).T @ A_d @ x
+            + c/2 * cp.sum_squares(A_d @ (x - x_k) + W @ d_k)
+        )
+        prob = cp.Problem(objective)
+        prob.solve()
+        sol = x.value
+        
+    else:
+        raise NotImplementedError
+    
+    return sol
+
+
+#--------------------------------------------------------------------------------------------------
+
+
+def TrackingADMM(num_steps: int, 
+                 model: ExampleModel, 
+                 params: Dict[str, float] = None):
+    """
+    Tracking-ADMM algorithm from the paper
+    "Tracking-ADMM for distributed constraint-coupled optimization", 2020.
+    
+    Args:
+        num_steps: int - Number of optimizer steps.
+        model: ExampleModel - Model with oracle, which gives F, grad_F, etc.
+        params: Dict[str, float] = None - Algorithm parameters.
+    Returns:
+        x_f: float - Solution.
+        x_err: float - Distance to the actual solution.
+        F_err: float - Function error.
+        cons_err: float - Constraints error.
+    """
+    # set variables to the paper notation
+    W = np.kron(model.mixing_matrix, np.identity(model.m))
+    A_d = model.bA_prime
+    
+    # set algorithm parameters
+    params = {} if params is None else params
+    c = params.get('c', 1e-3)
+    assert c > 0, "Parameter c must be greater than 0"
+    
+    # set the initial point
+    x = np.zeros(model.dim)
+    d = np.zeros(model.n * model.m)
+    lmbd = np.zeros(model.n * model.m)
+    
+    # get CVXPY solution
+    x_star, F_star = model.solution_initial
+    
+    # logging
+    x_err = np.zeros(num_steps) # distance
+    F_err = np.zeros(num_steps) # function error
+    cons_err = np.zeros(num_steps) # constraints error
+    
+    for i in range(num_steps):
+        # algorithm step
+        x_prev = x
+        x = get_argmin_TrackingADMM(x_prev, d, lmbd, c, model, mode='newton')
+        d = W @ d + A_d @ (x - x_prev)
+        lmbd = W @ lmbd + c * d
+        
+        # add values to the logs
+        x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
+        F_err[i] = abs(model.F(x) - F_star) # |F(x) - F*|
+        cons_err[i] = np.linalg.norm(model.bA @ x - model.bb) # ||bA @ x - bb||_2
+        
+    return x, x_err, F_err, cons_err  
