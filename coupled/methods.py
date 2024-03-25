@@ -290,7 +290,8 @@ def DPMM(num_steps: int,
     Lambda = np.zeros(model.n * model.m)
     
     # get CVXPY solution
-    x_star, F_star = model.solution_initial
+    xz_star, F_star = model.solution
+    x_star = xz_star[:model.dim]
     
     # logging
     x_err = np.zeros(num_steps) # distance
@@ -409,7 +410,8 @@ def TrackingADMM(num_steps: int,
     lmbd = np.zeros(model.n * model.m)
     
     # get CVXPY solution
-    x_star, F_star = model.solution_initial
+    xz_star, F_star = model.solution
+    x_star = xz_star[:model.dim]
     
     # logging
     x_err = np.zeros(num_steps) # distance

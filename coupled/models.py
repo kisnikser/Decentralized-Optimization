@@ -233,10 +233,7 @@ class ExampleModel(Model):
         self._bCT_bC = None # used in grad_F and hess_F
         self._bCT_bd = None # used in grad_F
 
-        # solution in initial formulation and Khasimov reformulation must be similar,
-        # but CVXPY solve problems quite different, so we find both solutions
         self.solution = self._get_solution()
-        self.solution_initial = self._get_solution_initial()
 
         
     @property
@@ -302,24 +299,3 @@ class ExampleModel(Model):
         prob.solve()
         
         return np.hstack((x.value, z.value)), prob.value
-    
-    
-    def _get_solution_initial(self):
-        """
-        Returns:
-            x_star = np.ndarray: Solution.
-            prob.value: Function value at solution.
-        """
-        x = cp.Variable(self.dim)
-        
-        objective = cp.Minimize(
-            1/2 * cp.sum_squares(self.bC @ x - self.bd) 
-            + self.theta/2 * cp.sum_squares(x)
-        )
-        
-        constraints = [self.bA @ x == self.bb]
-        
-        prob = cp.Problem(objective, constraints)
-        prob.solve()
-        
-        return x.value, prob.value

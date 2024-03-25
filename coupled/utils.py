@@ -51,8 +51,9 @@ def get_s2min_plus(matrix: np.ndarray, tol: float = 1e-6) -> float:
         s2min_plus: float - Minimum squared positive singular value of matrix.
     """
     _, sigma, _ = np.linalg.svd(matrix) # singular values of matrix
+    sigma = sigma[sigma > tol]
     sigma_squared = sigma ** 2
-    s2min_plus = sigma_squared[sigma_squared > tol].min()
+    s2min_plus = sigma_squared.min()
     return s2min_plus
 
 
