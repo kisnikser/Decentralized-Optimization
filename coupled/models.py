@@ -14,7 +14,8 @@ class Model:
                  dims: List[int],
                  graph: str = 'ring',
                  edge_prob: float = None,
-                 nu: float = None) -> None:
+                 nu: float = None,
+                 gossip: bool = False) -> None:
         """
         Args:
             num_nodes: int - Number of nodes in the graph (n).
@@ -23,6 +24,7 @@ class Model:
             graph: str = 'ring' - Network graph model.
             edge_prob: float = None - Probability threshold for Erdos-Renyi graph.
             nu: float = None - Augmentation parameter.
+            gossip: bool = False - W will be gossip matrix defined by metropolis weights.
         """
         
         self.n = num_nodes # n
@@ -32,8 +34,8 @@ class Model:
 
         # set parameters for constraints
         self.A = [np.random.rand(self.m, self.dims[i]) for i in range(self.n)] # A_1, ..., A_n
-        #self.b = [np.random.rand(self.m) for _ in range(self.n)] # b_1, ..., b_n
-        self.b = [np.zeros(self.m) for _ in range(self.n)] # b_1, ..., b_n
+        self.b = [np.random.rand(self.m) for _ in range(self.n)] # b_1, ..., b_n
+        #self.b = [np.zeros(self.m) for _ in range(self.n)] # b_1, ..., b_n
         
         self.bA = np.hstack(self.A) # bA = [A_1, ..., A_n]
         self.bb = np.sum(self.b, axis=0) # bb = b_1 + ... + b_n
@@ -48,6 +50,19 @@ class Model:
             self.W = utils.get_ER_W(self.n, edge_prob)
         else:
             raise NotImplementedError
+        
+        # graph adjacency matrix
+        self.adjacency_matrix = np.identity(self.n) * np.diag(self.W) - self.W
+        
+        # mixing matrix = metropolis weights matrix
+        self.mixing_matrix = utils.get_metropolis_weights(self.adjacency_matrix)
+        
+        # gossip matrix = I - mixing matrix
+        self.gossip_matrix = np.identity(self.n) - self.mixing_matrix
+        
+        # we can choose W to be gossip matrix
+        if gossip:
+            self.W = self.gossip_matrix
         
         Im = np.identity(self.m) # identity matrix of shape m
         Id = np.identity(self.dim)
@@ -78,11 +93,8 @@ class Model:
         if self._mu is None:
             mu_F = utils.lambda_min(self.hess_F()) # minimum eigenvalue of function F(x)
             mu_Phi = mu_F + self.nu # minimum eigenvalue of function Phi(x, z) >= mu_F + nu
-            #_, s, _ = np.linalg.svd(self.bB) # singular values of bB
-            #s2min = (s**2)[-1] # squared minimum singular value of bB
-            s2min = utils.lambda_min_plus(self.bB.T @ self.bB) # squared minimum singular value of bB
-            #s2min = np.linalg.eigvals(self.bB.T @ self.bB)[0]
-            mu_tildeF = mu_Phi * s2min # mu_tildeF >= mu_Phi * sigma^2_min(bB)
+            s2min_plus = utils.get_s2min_plus(self.bB)
+            mu_tildeF = mu_Phi * s2min_plus # mu_tildeF >= mu_Phi * s2min_plus(bB)
             self._mu = mu_tildeF
         return self._mu
     
@@ -96,10 +108,7 @@ class Model:
         if self._L is None:
             L_F = utils.lambda_max(self.hess_F()) # maximum eigenvalue of function F(x)
             L_Phi = L_F + self.nu # maximum eigenvalue of function Phi(x, z) <= L_F + nu
-            #_, s, _ = np.linalg.svd(self.bB) # singular values of bB
-            #s2max = (s**2)[0] # squared maximum singular value of bB
-            s2max = utils.lambda_max(self.bB.T @ self.bB) # squared maximum singular value of bB
-            #s2max = np.linalg.eigvals(self.bB.T @ self.bB)[-1]
+            s2max = utils.get_s2max(self.bB)
             L_tildeF = L_Phi * s2max # L_tildeF <= L_Phi * sigma^2_max(B)
             self._L = L_tildeF
         return self._L
@@ -183,7 +192,7 @@ class Model:
         Returns:
             x = [x_1, ..., x_n]: List[np.ndarray] - List of sub-vectors for each agent.
         """
-        split_indices = np.cumsum([0] + self.dims)[:-1]
+        split_indices = np.cumsum(self.dims)[:-1]
         x = np.split(bx, split_indices)
         return x
     
@@ -195,3 +204,98 @@ class Model:
             prob.value: Function value at solution.
         """
         raise NotImplementedError
+    
+
+class ExampleModel(Model):
+    """
+    Model from Example 2 in paper
+    "Decentralized Proximal Method of Multipliers 
+    for Convex Optimization with Coupled Constraints", 2023.
+    """
+    def __init__(self, 
+                 num_nodes: int, 
+                 num_cons: int, 
+                 dims: List[int], 
+                 graph: str = 'ring', 
+                 edge_prob: float = None, 
+                 nu: float = None,
+                 gossip: bool = False) -> None:
+        super().__init__(num_nodes, num_cons, dims, graph, edge_prob, nu, gossip)
+        
+        # set parameters for function
+        self.C = [np.random.rand(self.dims[i], self.dims[i]) for i in range(self.n)] # C_1, ..., C_n
+        self.d = [np.random.rand(self.dims[i]) for i in range(self.n)] # d_1, ..., d_n
+        self.theta = 1e-3 # regularization parameter
+        
+        self.bC = sp.linalg.block_diag(*self.C) # bC = diag(C_1, ... C_n)
+        self.bd = np.hstack(self.d) # bd = col(d_1, ..., d_n)
+        
+        self._bCT_bC = None # used in grad_F and hess_F
+        self._bCT_bd = None # used in grad_F
+
+        self.solution = self._get_solution()
+
+        
+    @property
+    def bCT_bC(self) -> np.ndarray:
+        if self._bCT_bC is None:
+            self._bCT_bC = self.bC.T @ self.bC
+        return self._bCT_bC
+
+    @property
+    def bCT_bd(self) -> np.ndarray:
+        if self._bCT_bd is None:
+            self._bCT_bd = self.bC.T @ self.bd
+        return self._bCT_bd
+    
+    def F(self, bx):
+        """
+        Args:
+            bx: np.ndarray - Vector of primal variables.
+        Returns:
+            Function value at point bx.
+        """
+        a = self.bC @ bx - self.bd
+        return 1/2 * (a.T @ a + self.theta * bx.T @ bx)
+    
+    
+    def grad_F(self, bx):
+        """
+        Args:
+            bx: np.ndarray - Vector of primal variables.
+        Returns:
+            Function gradient at point bx.
+        """
+        return self.bCT_bC @ bx - self.bCT_bd + self.theta * bx
+    
+    
+    def hess_F(self, bx: np.ndarray = None):
+        """
+        Args:
+            bx: np.ndarray = None - Vector of primal variables.
+        Returns:
+            Function hessian at point bx.
+        """
+        return self.bCT_bC + self.theta * np.identity(self.dim)
+    
+    
+    def _get_solution(self):
+        """
+        Returns:
+            xz_star = np.hstack((x.value, z.value)): Solution.
+            prob.value: Function value at solution.
+        """
+        x = cp.Variable(self.dim)
+        z = cp.Variable(self.n * self.m)
+        
+        objective = cp.Minimize(
+            1/2 * cp.sum_squares(self.bC @ x - self.bd) 
+            + self.theta/2 * cp.sum_squares(x)
+        )
+        
+        constraints = [self.bA_prime @ x + self.bW @ z - self.bb_prime == 0]
+        
+        prob = cp.Problem(objective, constraints)
+        prob.solve()
+        
+        return np.hstack((x.value, z.value)), prob.value
