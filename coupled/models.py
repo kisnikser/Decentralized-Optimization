@@ -1,47 +1,43 @@
 import numpy as np
 import cvxpy as cp
 import scipy as sp
+import scipy.stats as st
 from typing import List
 import utils
 
+# for dataset downloading
+from sklearn.datasets import load_svmlight_file
+from sklearn.model_selection import train_test_split
+    
+    
+###################################################################################################
+    
+    
 class Model:
     """
-    In this class we use notation from the current draft of the paper.
+    In this class we use notation from the our paper.
     """
     def __init__(self, 
                  num_nodes: int,
                  num_cons: int,
-                 dims: List[int],
+                 d: int,
                  graph: str = 'ring',
                  edge_prob: float = None,
-                 nu: float = None,
                  gossip: bool = False) -> None:
         """
         Args:
             num_nodes: int - Number of nodes in the graph (n).
             num_cons: int - Number of constraints rows (m).
-            dims: List[int] - Dimensions of local variables (d_1, ..., d_n).
+            d: int - Dimension of the local variables (d).
             graph: str = 'ring' - Network graph model.
             edge_prob: float = None - Probability threshold for Erdos-Renyi graph.
-            nu: float = None - Augmentation parameter.
             gossip: bool = False - W will be gossip matrix defined by metropolis weights.
         """
         
         self.n = num_nodes # n
         self.m = num_cons # m
-        self.dims = dims # [d_1, ..., d_n]
-        self.dim = sum(dims) # [d_1, ..., d_n] -> d_1 + ... + d_n = dim
-
-        # set parameters for constraints
-        self.A = [np.random.rand(self.m, self.dims[i]) for i in range(self.n)] # A_1, ..., A_n
-        self.b = [np.random.rand(self.m) for _ in range(self.n)] # b_1, ..., b_n
-        #self.b = [np.zeros(self.m) for _ in range(self.n)] # b_1, ..., b_n
-        
-        self.bA = np.hstack(self.A) # bA = [A_1, ..., A_n]
-        self.bb = np.sum(self.b, axis=0) # bb = b_1 + ... + b_n
-        
-        self.bA_prime = sp.linalg.block_diag(*self.A) # bA' = diag(A_1, ..., A_n)
-        self.bb_prime = np.hstack(self.b) # bb' = col(b_1, ..., b_n)       
+        self.d = d # d
+        self.dim = self.n * self.d # d + ... + d = nd
     
         # get Laplacian matrix of the network graph
         if graph == 'ring':
@@ -65,117 +61,151 @@ class Model:
             self.W = self.gossip_matrix
         
         Im = np.identity(self.m) # identity matrix of shape m
-        Id = np.identity(self.dim)
-        self.bW = np.kron(self.W, Im) # bW = W x Im
+        self.W_times_I = np.kron(self.W, Im) # bW = W x Im
         
-        self.bB = np.block([[np.identity(self.dim), np.zeros((self.dim, self.n * self.m))],
-                            [self.bA_prime, self.bW]])
-            
-        self._nu = nu # augmentation parameter
-        self._mu = None # strongly convexity constant for augmented function
-        self._L = None # gradient Lipschitz constant for augmented function
-        self._kappa = None # condition number of the augmented function
+        self._mu_f = None # strongly convexity constant for the function
+        self._L_f = None # gradient Lipschitz constant for the function
+        self._kappa_f = None # condition number of the function
+        
+        self._mu_A = None # strongly convexity constant A
+        self._L_A = None # gradient Lipschitz constant A
+        self._kappa_A = None # condition number A
+        
+        self._mu_W = None # strongly convexity constant W
+        self._L_W = None # gradient Lipschitz constant W
+        self._kappa_W = None # condition number W
     
+        self._r = None # augmentation parameter
+  
+    ### PARAMETERS OF FUNCTION
   
     @property
-    def nu(self) -> float:
-        if self._nu is None:
-            self._nu = utils.lambda_min(self.hess_F()) # nu = mu_F
-        return self._nu
-            
-            
+    def mu_f(self) -> float:
+        if self._mu_f is None:
+            self._mu_f = utils.lambda_min(self.hess_F())
+        return self._mu_f
+  
     @property
-    def mu(self) -> float:
-        """
-        Returns:
-            mu: float - Strongly convexity constant of the augmented function.
-        """
-        if self._mu is None:
-            mu_F = utils.lambda_min(self.hess_F()) # minimum eigenvalue of function F(x)
-            mu_Phi = mu_F + self.nu # minimum eigenvalue of function Phi(x, z) >= mu_F + nu
-            s2min_plus = utils.get_s2min_plus(self.bB)
-            mu_tildeF = mu_Phi * s2min_plus # mu_tildeF >= mu_Phi * s2min_plus(bB)
-            self._mu = mu_tildeF
-        return self._mu
-    
-         
-    @property
-    def L(self) -> float:
-        """
-        Returns:
-            L: float - gradient Lipschitz constant of the augmented function.
-        """
-        if self._L is None:
-            L_F = utils.lambda_max(self.hess_F()) # maximum eigenvalue of function F(x)
-            L_Phi = L_F + self.nu # maximum eigenvalue of function Phi(x, z) <= L_F + nu
-            s2max = utils.get_s2max(self.bB)
-            L_tildeF = L_Phi * s2max # L_tildeF <= L_Phi * sigma^2_max(B)
-            self._L = L_tildeF
-        return self._L
-    
+    def L_f(self) -> float:
+        if self._L_f is None:
+            self._L_f = utils.lambda_max(self.hess_F())
+        return self._L_f
     
     @property
-    def kappa(self) -> float:
-        """
-        Returns:
-            kappa: float - Condition number of the augmented function.
-        """
-        if self._kappa is None:
-            self._kappa = self.L / self.mu
-        return self._kappa
-            
+    def kappa_f(self) -> float:
+        if self._kappa_f is None:
+            self._kappa_f = self.L_f / self.mu_f
+        return self._kappa_f
     
-    def F(self, bx):
+    ### PARAMETERS OF A
+    
+    @property
+    def mu_A(self) -> float:
+        if self._mu_A is None:
+            bS = self.bA @ self.bA.T / self.n
+            self._mu_A = utils.lambda_min_plus(bS)
+        return self._mu_A
+  
+    @property
+    def L_A(self) -> float:
+        if self._L_A is None:
+            A_norms = [np.linalg.norm(self.A[i], ord=2)**2 for i in range(self.n)]
+            self._L_A = max(A_norms)
+        return self._L_A
+    
+    @property
+    def kappa_A(self) -> float:
+        if self._kappa_A is None:
+            self._kappa_A = self.L_A / self.mu_A
+        return self._kappa_A
+    
+    ### PARAMETERS OF W
+    
+    @property
+    def mu_W(self) -> float:
+        if self._mu_W is None:
+            self._mu_W = utils.lambda_min_plus(self.W)
+        return self._mu_W
+  
+    @property
+    def L_W(self) -> float:
+        if self._L_W is None:
+            self._L_W = utils.lambda_max(self.W)
+        return self._L_W
+    
+    @property
+    def kappa_W(self) -> float:
+        if self._kappa_W is None:
+            self._kappa_W = self.L_W / self.mu_W
+        return self._kappa_W
+    
+    ### AUGMENTATION PARAMETER (see Lemma 1)
+    
+    @property
+    def r(self) -> float:
+        if self._r is None:
+            self._r = self.mu_f / (2 * self.L_A)
+        return self._r
+    
+    ### ORACLE
+    
+    def F(self, x):
         """
         Args:
-            bx: np.ndarray - Vector of primal variables.
+            x: np.ndarray - Vector of primal variables.
         Returns:
-            Function value at point bx.
+            Function value at point x.
         """
         raise NotImplementedError
     
     
-    def tildeF(self, bx_bz):
+    def G(self, x, y):
         """
         Args:
-            bx_bz: np.ndarray - Vector of stacked primal and additional variables.
+            x: np.ndarray - Vector of primal variables.
+            y: np.ndarray - Vector of additional variables.
         Returns:
-            Augmented function value at point (bx, bz).
+            Augmented function value at point (x, y).
         """
-        bx = bx_bz[:self.dim]
-        bz = bx_bz[self.dim:]
         return (
-            self.F(bx)
-            + self.nu / 2 * np.linalg.norm(self.bA_prime @ bx + self.bW @ bz - self.bb_prime)**2
+            self.F(x)
+            + self.r / 2 * np.linalg.norm(self.bA @ x + y - self.bb)**2
         )
         
         
-    def grad_F(self, bx):
+    def grad_F(self, x):
         """
         Args:
-            bx: np.ndarray - Vector of primal variables.
+            x: np.ndarray - Vector of primal variables.
         Returns:
-            Function gradient at point bx.
+            Function gradient at point x.
         """
         raise NotImplementedError
-    
 
-    def grad_tildeF(self, bx_bz):
+        
+    def grad_G_x(self, x, y):
         """
         Args:
-            bx_bz: np.ndarray - Vector of stacked primal and additional variables.
+            x: np.ndarray - Vector of primal variables.
+            y: np.ndarray - Vector of additional variables.
         Returns:
-            Augmented function gradient at point (bx, bz).
+            Augmented function gradient wrt x at point (x, y).
         """
-        bx = bx_bz[:self.dim]
-        bz = bx_bz[self.dim:]
-        return np.hstack((
-            self.grad_F(bx) + self.nu * self.bA_prime.T @ (self.bA_prime @ bx + self.bW @ bz),
-            self.nu * self.bW @ (self.bA_prime @ bx + self.bW @ bz)
-        ))
+        return self.grad_F(x) + self.r * self.bA.T @ (self.bA @ x + y - self.bb)
     
     
-    def hess_F(self, bx: np.ndarray = None):
+    def grad_G_y(self, x, y):
+        """
+        Args:
+            x: np.ndarray - Vector of primal variables.
+            y: np.ndarray - Vector of additional variables.
+        Returns:
+            Augmented function gradient wrt y at point (x, y).
+        """
+        return self.r * (self.bA @ x + y - self.bb)
+    
+    
+    def hess_F(self, x: np.ndarray = None):
         """
         Args:
             bx: np.ndarray = None - Vector of primal variables.
@@ -183,29 +213,20 @@ class Model:
             Function hessian at point bx.
         """
         raise NotImplementedError
-    
-    
-    def _split_vector(self, bx):
-        """
-        Args:
-            bx: np.ndarray - Vector of primal variables.
-        Returns:
-            x = [x_1, ..., x_n]: List[np.ndarray] - List of sub-vectors for each agent.
-        """
-        split_indices = np.cumsum(self.dims)[:-1]
-        x = np.split(bx, split_indices)
-        return x
-    
+
     
     def _get_solution(self):
         """
         Returns:
-            x.value: Solution.
-            prob.value: Function value at solution.
+            x_star: Solution.
+            F_star: Function value at solution.
         """
         raise NotImplementedError
     
 
+###################################################################################################    
+
+    
 class ExampleModel(Model):
     """
     Model from Example 2 in paper
@@ -213,34 +234,55 @@ class ExampleModel(Model):
     for Convex Optimization with Coupled Constraints", 2023.
     """
     def __init__(self, 
-                 num_nodes: int, 
-                 num_cons: int, 
-                 dims: List[int], 
-                 graph: str = 'ring', 
-                 edge_prob: float = None, 
-                 nu: float = None,
+                 num_nodes: int,
+                 num_cons: int,
+                 d: int,
+                 graph: str = 'ring',
+                 edge_prob: float = None,
                  gossip: bool = False) -> None:
-        super().__init__(num_nodes, num_cons, dims, graph, edge_prob, nu, gossip)
+        """
+        Args:
+            num_nodes: int - Number of nodes in the graph (n).
+            num_cons: int - Number of constraints rows (m).
+            d: int - Dimension of the local variables (d).
+            graph: str = 'ring' - Network graph model.
+            edge_prob: float = None - Probability threshold for Erdos-Renyi graph.
+            gossip: bool = False - W will be gossip matrix defined by metropolis weights.
+        """
+        super().__init__(num_nodes, num_cons, d, graph, edge_prob, gossip)   
+        
+        self.dimensions = [self.d for _ in range(self.n)]
         
         # set parameters for function
-        self.C = [np.random.rand(self.dims[i], self.dims[i]) for i in range(self.n)] # C_1, ..., C_n
-        self.d = [np.random.rand(self.dims[i]) for i in range(self.n)] # d_1, ..., d_n
+        self.C = [np.random.rand(self.d, self.d) for _ in range(self.n)] # C_1, ..., C_n
+        self.d_ = [np.random.rand(self.d) for _ in range(self.n)] # d_1, ..., d_n
         self.theta = 1e-3 # regularization parameter
         
         self.bC = sp.linalg.block_diag(*self.C) # bC = diag(C_1, ... C_n)
-        self.bd = np.hstack(self.d) # bd = col(d_1, ..., d_n)
+        self.bd = np.hstack(self.d_) # bd = col(d_1, ..., d_n)
         
         self._bCT_bC = None # used in grad_F and hess_F
         self._bCT_bd = None # used in grad_F
+        
+        # set parameters for constraints
+        self.A = [np.random.randn(self.m, self.d) for _ in range(self.n)] # A_1, ..., A_n
+        self.b = [np.random.randn(self.m) for _ in range(self.n)] # b_1, ..., b_n
+
+        self.bA = sp.linalg.block_diag(*self.A) # bA = diag(A_1, ..., A_n)
+        self.bb = np.hstack(self.b) # bb = col(b_1, ..., b_n)       
+
+        self.A_hstacked = np.hstack(self.A)
+        self.b_sum = np.sum(self.b, axis=0)
 
         self.solution = self._get_solution()
 
-        
+
     @property
     def bCT_bC(self) -> np.ndarray:
         if self._bCT_bC is None:
             self._bCT_bC = self.bC.T @ self.bC
         return self._bCT_bC
+    
 
     @property
     def bCT_bd(self) -> np.ndarray:
@@ -248,33 +290,34 @@ class ExampleModel(Model):
             self._bCT_bd = self.bC.T @ self.bd
         return self._bCT_bd
     
-    def F(self, bx):
+    
+    def F(self, x):
         """
         Args:
-            bx: np.ndarray - Vector of primal variables.
+            x: np.ndarray - Vector of primal variables.
         Returns:
-            Function value at point bx.
+            Function value at point x.
         """
-        a = self.bC @ bx - self.bd
-        return 1/2 * (a.T @ a + self.theta * bx.T @ bx)
+        a = self.bC @ x - self.bd
+        return 1/2 * (a.T @ a + self.theta * x.T @ x)
     
     
-    def grad_F(self, bx):
+    def grad_F(self, x):
         """
         Args:
-            bx: np.ndarray - Vector of primal variables.
+            x: np.ndarray - Vector of primal variables.
         Returns:
-            Function gradient at point bx.
+            Function gradient at point x.
         """
-        return self.bCT_bC @ bx - self.bCT_bd + self.theta * bx
+        return self.bCT_bC @ x - self.bCT_bd + self.theta * x
     
     
-    def hess_F(self, bx: np.ndarray = None):
+    def hess_F(self, x: np.ndarray = None):
         """
         Args:
-            bx: np.ndarray = None - Vector of primal variables.
+            x: np.ndarray = None - Vector of primal variables.
         Returns:
-            Function hessian at point bx.
+            Function hessian at point x.
         """
         return self.bCT_bC + self.theta * np.identity(self.dim)
     
@@ -282,20 +325,389 @@ class ExampleModel(Model):
     def _get_solution(self):
         """
         Returns:
-            xz_star = np.hstack((x.value, z.value)): Solution.
-            prob.value: Function value at solution.
+            x_star: Solution.
+            F_star: Function value at solution.
         """
         x = cp.Variable(self.dim)
-        z = cp.Variable(self.n * self.m)
         
         objective = cp.Minimize(
             1/2 * cp.sum_squares(self.bC @ x - self.bd) 
             + self.theta/2 * cp.sum_squares(x)
         )
         
-        constraints = [self.bA_prime @ x + self.bW @ z - self.bb_prime == 0]
+        constraints = [self.A_hstacked @ x - self.b_sum == 0]
         
         prob = cp.Problem(objective, constraints)
         prob.solve()
         
-        return np.hstack((x.value, z.value)), prob.value
+        x_star = x.value
+        F_star = prob.value
+        
+        return x_star, F_star
+    
+
+###################################################################################################
+
+
+class VFL(Model):
+    """
+    Model for Vertical Federative Learning Problem.
+    """
+    def __init__(self,
+                 num_nodes: int,
+                 title: str = 'mushrooms',
+                 train_size: float = 0.7,
+                 graph: str = 'ring',
+                 edge_prob: float = None,
+                 gossip: bool = False,
+                 labels_distribution: bool = False) -> None:
+        """
+        Args:
+            num_nodes: int - Number of nodes in the graph (n).
+            title: str = 'mushrooms' - Title of the dataset
+            train_size: float = 0.7 - Train sample part
+            graph: str = 'ring' - Network graph model.
+            edge_prob: float = None - Probability threshold for Erdos-Renyi graph.
+            gossip: bool = False - W will be gossip matrix defined by metropolis weights.
+            labels_distribution: bool = False - Labels will be distributed between devices.
+        """
+        
+        feature_matrix, labels = self._get_dataset(title, train_size)
+        
+        num_features = feature_matrix.shape[1]
+        num_cons = feature_matrix.shape[0]
+        
+        # we will split features in the following way:
+        # device 1: num_features // n # + num_features % n???
+        # device 2: num_features // n
+        # ...
+        # device n: num_features // n
+        
+        d = num_features // num_nodes      
+        
+        super().__init__(num_nodes, num_cons, d, graph, edge_prob, gossip)   
+        
+        self.dim = self.n * self.d + self.m     
+        
+        self.Features = np.split(feature_matrix, self.n, axis=1) # [bF_1,  ..., bF_n]
+        self.l = labels # l
+        self.lmbd = 1e-3 # lambda - regularization parameter
+        
+        self.bF = np.hstack(self.Features)
+        
+        self.dimensions = [self.d for _ in range(self.n)]
+        self.dimensions[0] = self.d + self.m
+        self.labels_distribution = labels_distribution
+        if self.labels_distribution:
+            self.num_samples = self.split_number(self.m, self.n)
+            self.dimensions = [self.d + self.num_samples[i] for i in range(self.n)]
+        
+        self._get_constraints() # -> self.A, self.b, self.bA, self.bb
+        
+        self.solution = self._get_solution()
+        
+    @staticmethod
+    def split_number(m, n):
+        """
+        Divide m among n devices.
+        """
+        # Calculate the quotient and remainder of m divided by n
+        quotient = m // n
+        remainder = m % n
+        # Create a list of n elements, each initially set to the quotient
+        split = [quotient] * n
+        # Add 1 to the first 'remainder' elements of the list
+        for i in range(remainder):
+            split[i] += 1
+        return split
+    
+    
+    def _get_dataset(self, 
+                     title: str = 'mushrooms', 
+                     train_size: float = 0.7):
+        """
+        Download the dataset `title`.
+        Then split it into train and test.
+        After that returns feature matrix and labels from the train sample.
+        
+        Args:
+            title: str = 'mushrooms' - Title of the dataset
+            train_size: float = 0.7 - Train sample part
+        Returns:
+            feature_matrix: np.ndarray - Matrix objects-features from train part of the dataset
+            labels: np.ndarray - Vector of labels from train part of the dataset
+        """
+        
+        if title == 'mushrooms':
+            dataset = '../data/mushrooms.txt'
+            data = load_svmlight_file(dataset)
+            X, y = data[0].toarray(), data[1]
+            y = 2 * y - 3 # -1 and 1
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, train_size=train_size, random_state=42
+            )
+            
+        elif title == 'synthetic':
+            # synthetic linear regression dataset
+            
+            n_features = 14 * 2
+            n_samples = 14 * 10
+            
+            mu_x = np.zeros(n_features)
+            Sigma_x = np.identity(n_features)
+            
+            alpha = 1
+            sigma2 = 1
+
+            X = st.multivariate_normal(mean=mu_x, cov=Sigma_x).rvs(size=n_samples)
+            w = st.multivariate_normal(mean=np.zeros(n_features), cov=alpha**(-1)*np.identity(n_features)).rvs(size=1)
+            eps = st.multivariate_normal(mean=np.zeros(n_samples), cov=sigma2*np.identity(n_samples)).rvs(size=1)
+            y = X @ w + eps
+            
+            X_train, y_train = X, y
+            
+        else:
+            raise NotImplementedError
+       
+        feature_matrix = X_train
+        labels = y_train
+     
+        return feature_matrix, labels
+    
+    
+    def _get_constraints(self):
+        """
+        Create constraints for the VFL problem.
+        """
+
+        self.A = [] # list for A_1, ..., A_n
+        
+        if not self.labels_distribution:
+        
+            A_1 = np.hstack((self.Features[0], -np.identity(self.m)))
+            self.A.append(A_1)
+            
+            for i in range(1, self.n):
+                self.A.append(self.Features[i])
+        
+        else:
+            
+            for i in range(self.n):
+                dim_z_i = self.num_samples[i]
+                left = self.Features[i]
+                zeros_dim_i = np.zeros((dim_z_i, dim_z_i))
+                ident_dim_i = np.identity(dim_z_i)
+                right_matrices = [zeros_dim_i for _ in range(self.n)]
+                right_matrices[i] = ident_dim_i
+                right = np.vstack(right_matrices)
+                A_i = np.hstack((left, right))
+                self.A.append(A_i)
+        
+        self.b = [np.zeros(self.m) for _ in range(self.n)] # b_1, ..., b_n
+        #######
+        self.bA = sp.linalg.block_diag(*self.A) # bA = diag(A_1, ..., A_n)
+        self.bb = np.hstack(self.b) # bb = col(b_1, ..., b_n)       
+        #######
+        self.A_hstacked = np.hstack(self.A)
+        self.b_sum = np.sum(self.b, axis=0)
+    
+    
+    def _split_vector(self, x):
+        """
+        In VFL we have the vector x as stacked w and z.
+        This stack can be different.
+        So we should understand what indices correspond to w and z.
+        
+        Args:
+            x: np.ndarray - Vector of primal variables.
+        Returns:
+            z: np.ndarray - Vector z (see notation).
+            w: np.ndarray - Weights vector.
+        """
+        
+        if not self.labels_distribution:
+            # in this case vector x = col(x_1, ..., x_n)
+            # x_1 = col(w_1, z)
+            # x_i = w_i,  i = 2, ..., n
+            x_1 = x[:self.d+self.m]
+            w_1 = x_1[:self.d]
+            w = np.hstack((w_1, x[self.d+self.m:]))
+            z = x_1[self.d:]
+        else:
+            # in this case vector x = col(x_1, ..., x_n)
+            # x_i = col(w_i, z_i),  i = 1, ..., n
+            
+            dimensions = [self.d + self.num_samples[i] for i in range(self.n)]
+            cumsum = np.cumsum([0, *dimensions])
+            z = []
+            w = []
+                        
+            for i in range(self.n):
+                left = cumsum[i]
+                right = cumsum[i+1]
+                x_i = x[left:right]
+                w.append(x_i[:self.d])
+                z.append(x_i[self.d:])
+            
+            z = np.hstack(z)
+            w = np.hstack(w)
+            
+        return (z, w)
+    
+    
+    def _rearrange_vector(self, g):
+        """
+        It is the inversed function to _split_vector(x).
+        It is easier to calculate F(), grad_F() and hess_F() if form of x = col(z, w).
+        So after calculating in such way we have to rearrange it to the initial form.
+        
+        Args:
+            g: np.ndarray - Vector in the form of col(z, w).
+        Returns:
+            g_initial: np.ndarray - Vector in the initial form of primal variables.
+        """
+        
+        z = g[:self.m]
+        w = g[self.m:]
+    
+        if not self.labels_distribution:
+            # in this case vector x = col(x_1, ..., x_n)
+            # x_1 = col(w_1, z)
+            # x_i = w_i,  i = 2, ..., n
+            w_1 = w[:self.d]
+            x_1 = np.hstack((w_1, z))
+            g_initial = np.hstack((x_1, w[self.d:]))
+        else:
+            # in this case vector x = col(x_1, ..., x_n)
+            # x_i = col(w_i, z_i),  i = 1, ..., n
+            cumsum = np.cumsum([0, *self.num_samples])
+            g_initial = []
+                        
+            for i in range(self.n):
+                left = cumsum[i]
+                right = cumsum[i+1]
+                z_i = z[left:right]
+                w_i = w[i*self.d:i*self.d+self.d]
+                x_i = np.hstack((w_i, z_i))
+                g_initial.append(x_i)
+            
+            g_initial = np.hstack(g_initial)
+    
+        return g_initial
+    
+    def _rearrange_matrix(self, H):
+        """
+        It is easier to calculate F(), grad_F() and hess_F() if form of x = col(z, w).
+        So after calculating in such way we have to rearrange it to the initial form.
+        
+        Actually, this function is only for hessian of the function, that is in the form
+        (where x = col(z, w)) as hess_F = diag(I_m, 2*lambda*I_nd)
+        
+        Args:
+            H: np.ndarray - Block matrix in the form of col(z, w).
+        Returns:
+            H_initial: np.ndarray - Block matrix in the initial form of primal variables.
+        """
+        
+        z = H[:self.m, :self.m]
+        w = H[self.m:, self.m:]
+    
+        if not self.labels_distribution:
+            # in this case vector x = col(x_1, ..., x_n)
+            # x_1 = col(w_1, z)
+            # x_i = w_i,  i = 2, ..., n
+            w_1 = w[:self.d, :self.d]
+            x_1 = sp.linalg.block_diag(w_1, z)
+            H_initial = sp.linalg.block_diag(x_1, w[self.d:, self.d:])
+        else:
+            # in this case vector x = col(x_1, ..., x_n)
+            # x_i = col(w_i, z_i),  i = 1, ..., n
+            cumsum = np.cumsum([0, *self.num_samples])
+            H_initial = []
+                        
+            for i in range(self.n):
+                left = cumsum[i]
+                right = cumsum[i+1]
+                z_i = z[left:right, left:right]
+                w_i = w[i*self.d:i*self.d+self.d, i*self.d:i*self.d+self.d]
+                x_i = sp.linalg.block_diag(w_i, z_i)
+                H_initial.append(x_i)
+            
+            H_initial = sp.linalg.block_diag(*H_initial)
+
+    
+        return H_initial
+    
+    def F(self, x):
+        """
+        Args:
+            x: np.ndarray - Vector of primal variables.
+        Returns:
+            Function value at point x.
+        """
+        z, w = self._split_vector(x)
+        return 1 / 2 * np.linalg.norm(z - self.l)**2 + self.lmbd * np.linalg.norm(w)**2
+        
+    
+    def grad_F(self, x):
+        """
+        Args:
+            x: np.ndarray - Vector of primal variables.
+        Returns:
+            Function gradient at point x.
+        """
+        
+        z, w = self._split_vector(x)
+        g_z = z - self.l
+        g_w = 2 * self.lmbd * w
+        g = np.hstack((g_z, g_w))
+        h = self._rearrange_vector(g)
+        
+        return h
+    
+    
+    def hess_F(self, x: np.ndarray = None):
+        """
+        Args:
+            x: np.ndarray = None - Vector of primal variables.
+        Returns:
+            Function hessian at point x.
+        """
+        
+        I_m = np.identity(self.m)
+        I_nd = np.identity(self.n * self.d)
+        
+        H = sp.linalg.block_diag(I_m, 2 * self.lmbd * I_nd)
+        H_initial = self._rearrange_matrix(H)
+        
+        return H_initial
+    
+    
+    def _get_solution(self):
+        """
+        Returns:
+            x_star: Solution.
+            F_star: Function value at solution.
+        """
+        w = cp.Variable(self.n * self.d)
+        z = cp.Variable(self.m)
+        
+        objective = cp.Minimize(
+            1/2 * cp.sum_squares(z - self.l) 
+            + self.lmbd * cp.sum_squares(w)
+        )
+        
+        constraints = [
+            self.bF @ w == z
+        ]
+        
+        prob = cp.Problem(objective, constraints)
+        prob.solve()
+        F_star = prob.value
+        
+        x_star = self._rearrange_vector(np.hstack((z.value, w.value)))
+        
+        return x_star, F_star
+    
+    
+###################################################################################################
