@@ -2,7 +2,7 @@ import numpy as np
 import cvxpy as cp
 import scipy as sp
 import scipy.stats as st
-from typing import List
+from typing import List, Optional
 import utils
 
 # for dataset downloading
@@ -102,14 +102,14 @@ class Model:
     @property
     def mu_A(self) -> float:
         if self._mu_A is None:
-            bS = self.bA @ self.bA.T / self.n
+            bS = sum([Ai @ Ai.T for Ai in self.A]) / self.n
             self._mu_A = utils.lambda_min_plus(bS)
         return self._mu_A
   
     @property
     def L_A(self) -> float:
         if self._L_A is None:
-            A_norms = [np.linalg.norm(self.A[i], ord=2)**2 for i in range(self.n)]
+            A_norms = [utils.get_s2max(Ai) for Ai in self.A]
             self._L_A = max(A_norms)
         return self._L_A
     
@@ -205,10 +205,10 @@ class Model:
         return self.r * (self.bA @ x + y - self.bb)
     
     
-    def hess_F(self, x: np.ndarray = None):
+    def hess_F(self, x: Optional[np.ndarray] = None):
         """
         Args:
-            bx: np.ndarray = None - Vector of primal variables.
+            x: Optional[np.ndarray] = None - Vector of primal variables.
         Returns:
             Function hessian at point bx.
         """
@@ -238,7 +238,7 @@ class ExampleModel(Model):
                  num_cons: int,
                  d: int,
                  graph: str = 'ring',
-                 edge_prob: float = None,
+                 edge_prob: Optional[float] = None,
                  gossip: bool = False) -> None:
         """
         Args:
@@ -246,7 +246,7 @@ class ExampleModel(Model):
             num_cons: int - Number of constraints rows (m).
             d: int - Dimension of the local variables (d).
             graph: str = 'ring' - Network graph model.
-            edge_prob: float = None - Probability threshold for Erdos-Renyi graph.
+            edge_prob: Optional[float] = None - Probability threshold for Erdos-Renyi graph.
             gossip: bool = False - W will be gossip matrix defined by metropolis weights.
         """
         super().__init__(num_nodes, num_cons, d, graph, edge_prob, gossip)   
@@ -312,10 +312,10 @@ class ExampleModel(Model):
         return self.bCT_bC @ x - self.bCT_bd + self.theta * x
     
     
-    def hess_F(self, x: np.ndarray = None):
+    def hess_F(self, x: Optional[np.ndarray] = None):
         """
         Args:
-            x: np.ndarray = None - Vector of primal variables.
+            x: Optional[np.ndarray] = None - Vector of primal variables.
         Returns:
             Function hessian at point x.
         """
@@ -358,7 +358,7 @@ class VFL(Model):
                  title: str = 'mushrooms',
                  train_size: float = 0.7,
                  graph: str = 'ring',
-                 edge_prob: float = None,
+                 edge_prob: Optional[float] = None,
                  gossip: bool = False,
                  labels_distribution: bool = False) -> None:
         """
@@ -367,7 +367,7 @@ class VFL(Model):
             title: str = 'mushrooms' - Title of the dataset
             train_size: float = 0.7 - Train sample part
             graph: str = 'ring' - Network graph model.
-            edge_prob: float = None - Probability threshold for Erdos-Renyi graph.
+            edge_prob: Optional[float] = None - Probability threshold for Erdos-Renyi graph.
             gossip: bool = False - W will be gossip matrix defined by metropolis weights.
             labels_distribution: bool = False - Labels will be distributed between devices.
         """
@@ -498,7 +498,7 @@ class VFL(Model):
                 zeros_dim_i = np.zeros((dim_z_i, dim_z_i))
                 ident_dim_i = np.identity(dim_z_i)
                 right_matrices = [zeros_dim_i for _ in range(self.n)]
-                right_matrices[i] = ident_dim_i
+                right_matrices[i] = -ident_dim_i
                 right = np.vstack(right_matrices)
                 A_i = np.hstack((left, right))
                 self.A.append(A_i)
@@ -666,10 +666,10 @@ class VFL(Model):
         return h
     
     
-    def hess_F(self, x: np.ndarray = None):
+    def hess_F(self, x: Optional[np.ndarray] = None):
         """
         Args:
-            x: np.ndarray = None - Vector of primal variables.
+            x: Optional[np.ndarray] = None - Vector of primal variables.
         Returns:
             Function hessian at point x.
         """

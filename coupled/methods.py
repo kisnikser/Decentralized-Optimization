@@ -2,7 +2,7 @@ import numpy as np
 import cvxpy as cp
 import scipy as sp
 from models import Model, ExampleModel, VFL
-from typing import Dict
+from typing import Dict, Optional
 import utils
 
 
@@ -11,14 +11,14 @@ import utils
 
 def algorithm_1(num_steps: int,
                 model: Model,
-                params: Dict[str, float] = None):
+                params: Optional[Dict[str, float]] = None):
     """
     Algorithm 1 from the our paper.
     
     Args:
         num_steps: int - Number of optimizer steps.
         model: NewModel - NewModel with oracle, which gives F, grad_F, etc.
-        params: Dict[str, float] = None - Algorithm parameters.
+        params: Optional[Dict[str, float]] = None - Algorithm parameters.
     Returns:
         x: float - Solution.
         x_err: np.ndarray - Sequence of distances to the actual solution.
@@ -87,6 +87,7 @@ def algorithm_1(num_steps: int,
         delta_x = model.bA @ (model.bA.T @ z - g_x)
         delta_y = model.W_times_I @ (z - g_y)
         
+        z_prev = z
         z = z - eta_z * (model.bA @ x_next + y_next - model.bb + gamma_x * delta_x + gamma_y * delta_y)
         
         x = x_next
@@ -108,7 +109,7 @@ def algorithm_1(num_steps: int,
 
 def DPMM(num_steps: int, 
          model: Model, 
-         params: Dict[str, float] = None):
+         params: Optional[Dict[str, float]] = None):
     """
     Decentralized Proximal Method of Multipliers (DPMM) from the paper
     "Decentralized Proximal Method of Multipliers for Convex Optimization with Coupled Constraints", 2023.
@@ -116,7 +117,7 @@ def DPMM(num_steps: int,
     Args:
         num_steps: int - Number of optimizer steps.
         model: Model - Model with oracle, which gives F, grad_F, etc.
-        params: Dict[str, float] = None - Algorithm parameters.
+        params: Optional[Dict[str, float]] = None - Algorithm parameters.
     Returns:
         x_f: float - Solution.
         x_err: float - Distance to the actual solution.
@@ -327,7 +328,7 @@ def get_argmin_DPMM_vfl(x_k: np.ndarray,
 
 def TrackingADMM(num_steps: int, 
                  model: Model, 
-                 params: Dict[str, float] = None):
+                 params: Optional[Dict[str, float]] = None):
     """
     Tracking-ADMM algorithm from the paper
     "Tracking-ADMM for distributed constraint-coupled optimization", 2020.
@@ -335,7 +336,7 @@ def TrackingADMM(num_steps: int,
     Args:
         num_steps: int - Number of optimizer steps.
         model: Model - Model with oracle, which gives F, grad_F, etc.
-        params: Dict[str, float] = None - Algorithm parameters.
+        params: Optional[Dict[str, float]] = None - Algorithm parameters.
     Returns:
         x_f: float - Solution.
         x_err: float - Distance to the actual solution.
@@ -361,7 +362,8 @@ def TrackingADMM(num_steps: int,
     
     # set the initial point
     x = np.zeros(model.dim)
-    d = np.zeros(model.n * model.m)
+    xs = [np.zeros(model.dimensions[i]) for i in range(model.n)]
+    d = np.hstack([Ai @ xi0 - bi for (Ai, xi0, bi) in zip(model.A, xs, model.b)])
     lmbd = np.zeros(model.n * model.m)
     
     # get CVXPY solution
