@@ -446,26 +446,8 @@ class VFL(Model):
         elif title == 'synthetic':
             # synthetic linear regression dataset
             
-            n_features = 14 * 2
-            n_samples = 14 * 10
-            
-            mu_x = np.zeros(n_features)
-            Sigma_x = np.identity(n_features)
-            
-            alpha = 1
-            sigma2 = 1
-
-            X = st.multivariate_normal(mean=mu_x, cov=Sigma_x).rvs(size=n_samples)
-            w = st.multivariate_normal(mean=np.zeros(n_features), cov=alpha**(-1)*np.identity(n_features)).rvs(size=1)
-            eps = st.multivariate_normal(mean=np.zeros(n_samples), cov=sigma2*np.identity(n_samples)).rvs(size=1)
-            y = X @ w + eps
-            
-            X_train, y_train = X, y
-            
-        elif title == 'two':
-            
-            n_features = 2 * 5
-            n_samples = 2 * 10
+            n_features = 3 * 1
+            n_samples = 3 * 10
             
             mu_x = np.zeros(n_features)
             Sigma_x = np.identity(n_features)
@@ -690,6 +672,8 @@ class VFL(Model):
         
         H = sp.linalg.block_diag(I_m, 2 * self.lmbd * I_nd)
         H_initial = self._rearrange_matrix(H)
+        
+        self._hess_F = H_initial
         
         return H_initial
     

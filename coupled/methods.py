@@ -4,6 +4,7 @@ import scipy as sp
 from models import Model, ExampleModel, VFL
 from typing import Dict, Optional
 import utils
+import time
 
 
 ###################################################################################################
@@ -25,6 +26,7 @@ def algorithm_1(num_steps: int,
         F_err: np.ndarray - Sequence of function error.
         cons_err: np.ndarray - Sequence of constraints error.
         primal_dual_err: np.ndarray - Sequence of primal-dual optimality condition error.
+        ts: np.ndarray - Sequence of time taken for previous iterations.
     """
 
     # set algorithm parameters
@@ -46,16 +48,6 @@ def algorithm_1(num_steps: int,
                                     eta_y * model.mu_f * model.mu_W / (4 * model.L_A)))
     beta = params.get('beta', max(1 - alpha / 2,
                                   1 - eta_z * gamma_x * model.mu_A / 2))
-    
-    print('gamma_x', gamma_x)
-    print('gamma_y', gamma_y)
-    
-    print('eta_x', eta_x)
-    print('eta_y', eta_y)
-    print('eta_z', eta_z)
-    
-    print('alpha', alpha)
-    print('beta', beta)
 
     # set the initial point
     x = np.zeros(model.dim)
@@ -77,6 +69,9 @@ def algorithm_1(num_steps: int,
     F_err = np.zeros(num_steps) # function error
     cons_err = np.zeros(num_steps) # constraints error
     primal_dual_err = np.zeros(num_steps) # primal-dual optimality condition error
+    
+    ts = []
+    start = time.time()
     
     for i in range(num_steps):
         
@@ -104,6 +99,9 @@ def algorithm_1(num_steps: int,
         x = x_next
         y = y_next
         
+        end = time.time()
+        ts.append(end - start)
+        
         # add values to the logs
         if isinstance(model, VFL):
             _, w = model._split_vector(x)
@@ -114,7 +112,7 @@ def algorithm_1(num_steps: int,
         cons_err[i] = np.linalg.norm(model.A_hstacked @ x - model.b_sum) # ||A @ x - b||_2
         primal_dual_err[i] = np.linalg.norm(model.grad_G_x(x, y) - model.bA.T @ z) # |||grad_G_x(x, y) - bA.T @ z|_2
         
-    return x, x_err, F_err, cons_err, primal_dual_err
+    return x, x_err, F_err, cons_err, primal_dual_err, ts
 
 
 ###################################################################################################
@@ -136,6 +134,7 @@ def DPMM(num_steps: int,
         x_err: float - Distance to the actual solution.
         F_err: float - Function error.
         cons_err: float - Constraints error.
+        ts: np.ndarray - Sequence of time taken for previous iterations.
     """
     
     if isinstance(model, ExampleModel):
@@ -183,14 +182,20 @@ def DPMM(num_steps: int,
     F_err = np.zeros(num_steps) # function error
     cons_err = np.zeros(num_steps) # constraints error
     
+    ts = []
+    start = time.time()
+    
     for i in range(num_steps):
         # algorithm step
-        x_hat = get_argmin_DPMM(x, y - Gamma @ Lambda, alpha, gamma, model, mode='newton')
+        x_hat = get_argmin_DPMM(x, y - Gamma @ Lambda, alpha, gamma, model)
         y_hat = y - Gamma @ Lambda + Gamma @ G_d(x_hat)
         x = (I_n - Theta) @ x + Theta @ x_hat
         Lambda_prev = Lambda
         Lambda = Lambda_prev + beta * bL @ y_hat
         y = y_hat + Gamma @ (Lambda_prev - Lambda)
+        
+        end = time.time()
+        ts.append(end - start)
         
         # add values to the logs
         if isinstance(model, VFL):
@@ -201,7 +206,7 @@ def DPMM(num_steps: int,
         F_err[i] = abs(model.F(x) - F_star) # |F(x) - F*|
         cons_err[i] = np.linalg.norm(model.A_hstacked @ x - model.b_sum) # ||bA @ x - bb||_2
         
-    return x, x_err, F_err, cons_err
+    return x, x_err, F_err, cons_err, ts
 
 #--------------------------------------------------------------------------------------------------
 
@@ -210,8 +215,7 @@ def get_argmin_DPMM_example(x_k: np.ndarray,
                             y: np.ndarray,
                             alpha: np.ndarray,
                             gamma: np.ndarray,
-                            model: ExampleModel,
-                            mode: str = 'newton'):
+                            model: ExampleModel):
     """
     Solve argmin subproblem in DPMM for our Example problem.
     As we have quadratic problem, we do just one step on Newton method.
@@ -223,39 +227,33 @@ def get_argmin_DPMM_example(x_k: np.ndarray,
         alpha: np.ndarray - Vector of parameters alpha.
         gamma: np.ndarray - Vector of parameters gamma.
         model: ExampleModel - Model with oracle, which gives F, grad_F, etc.
-        mode: str = 'newton' - Use newton or CVXPY.
     Returns:
         sol: np.ndarray - Solution for argmin subproblem.
     """
     x_k_array = np.split(x_k, np.cumsum([model.d for _ in range(model.n)])[:-1])
     y_array = np.split(y, np.cumsum([model.m for _ in range(model.n)])[:-1])
-    sol = []
-
-    if mode == 'newton':
-        for i in range(model.n):
-            # calculate gradient function
-            grad = lambda x: (
-                model.C[i].T @ model.C[i] @ x - model.C[i].T @ model.d_[i] + model.theta * x
-                + model.A[i].T @ (y_array[i] + gamma[i] * (model.A[i] @ x - model.b[i]))
-                + 1 / alpha[i] * (x - x_k_array[i])
-            )
-            
-            # calculate hessian matrix
-            hess = lambda x: (
-                model.C[i].T @ model.C[i] + model.theta * np.identity(model.d)
-                + gamma[i] * model.A[i].T @ model.A[i]
-                + 1 / alpha[i] * np.identity(model.d)
-            ) 
-            
-            # get a solution by one newton step
-            sol.extend(x_k_array[i] - np.linalg.inv(hess(x_k_array[i])) @ grad(x_k_array[i]))
-            
-        sol = np.array(sol)
-        
-    else:
-        raise NotImplementedError
     
-    return sol
+    x = []
+
+    for i in range(model.n):
+        
+        A = (
+            model.C[i].T @ model.C[i]
+            + gamma[i] * model.A[i].T @ model.A[i]
+            + (model.theta + 1 / alpha[i]) * np.identity(model.d)
+        )
+        
+        b = (
+            model.C[i].T @ model.d_[i]
+            + model.A[i].T @ (gamma[i] * model.b[i] - y_array[i])
+            + 1 / alpha[i] * x_k_array[i]
+        )
+        
+        x.extend(np.linalg.solve(A, b))
+        
+    x = np.array(x)
+    
+    return x
 
 #--------------------------------------------------------------------------------------------------
 
@@ -264,8 +262,7 @@ def get_argmin_DPMM_vfl(x_k: np.ndarray,
                         y: np.ndarray,
                         alpha: np.ndarray,
                         gamma: np.ndarray,
-                        model: VFL,
-                        mode: str = 'newton'):
+                        model: VFL):
     """
     Solve argmin subproblem in DPMM for our VFL problem.
     As we have quadratic problem, we do just one step on Newton method.
@@ -277,13 +274,13 @@ def get_argmin_DPMM_vfl(x_k: np.ndarray,
         alpha: np.ndarray - Vector of parameters alpha.
         gamma: np.ndarray - Vector of parameters gamma.
         model: ExampleModel - Model with oracle, which gives F, grad_F, etc.
-        mode: str = 'newton' - Use newton or CVXPY.
     Returns:
         sol: np.ndarray - Solution for argmin subproblem.
     """
         
     cumsum = np.cumsum(model.dimensions)[:-1]
     x_k_array = np.split(x_k, cumsum)
+    y_array = np.split(y, model.n)
     
     if model.labels_distribution:
         cumsum = np.cumsum(model.num_samples)[:-1]
@@ -291,55 +288,39 @@ def get_argmin_DPMM_vfl(x_k: np.ndarray,
     else:
         l_array = [model.l]
         
-    y_array = np.split(y, np.cumsum([model.m for _ in range(model.n)])[:-1])
-    sol = []
-
-    if mode == 'newton':
-        for i in range(model.n):
-            
-            # calculate gradient function
-            def grad(x):
-                
-                if model.labels_distribution or i == 0:
-                    w = x[:model.d]
-                    z = x[model.d:]
-                    grad_f = np.hstack((2 * model.lmbd * w, z - l_array[i]))    
-                else:
-                    grad_f = 2 * model.lmbd * x
-                    
-                return (
-                    grad_f
-                    + model.A[i].T @ (y_array[i] + gamma[i] * (model.A[i] @ x - model.b[i]))
-                    + 1 / alpha[i] * (x - x_k_array[i])
-                )
-                
-            
-            # calculate hessian matrix
-            def hess(x):
-                
-                if model.labels_distribution or i == 0:
-                    w = x[:model.d]
-                    z = x[model.d:]
-                    hess_f = sp.linalg.block_diag(2 * model.lmbd * np.identity(model.d),
-                                                  np.identity(model.dimensions[i] - model.d))    
-                else:
-                    hess_f = 2 * model.lmbd * np.identity(model.dimensions[i])
-            
-                return (
-                    hess_f
-                    + gamma[i] * model.A[i].T @ model.A[i]
-                    + 1 / alpha[i] * np.identity(model.dimensions[i])
-                ) 
-            
-            # get a solution by one newton step
-            sol.extend(x_k_array[i] - np.linalg.inv(hess(x_k_array[i])) @ grad(x_k_array[i]))
-            
-        sol = np.array(sol)
-        
-    else:
-        raise NotImplementedError
+    x = []
     
-    return sol
+    cumsum = np.cumsum([0, *model.dimensions])
+    
+    for i in range(model.n):
+        
+        left = cumsum[i]
+        right = cumsum[i+1]
+
+        hess_f = model._hess_F[left:right, left:right]
+        
+        if model.labels_distribution or i == 0:
+            resid_f = np.hstack((np.zeros(model.d), l_array[i]))
+        else:
+            resid_f = np.zeros(model.d)
+            
+        A = (
+            hess_f
+            + gamma[i] * model.A[i].T @ model.A[i]
+            + 1 / alpha[i] * np.identity(model.dimensions[i])
+        )
+        
+        b = (
+            resid_f
+            + model.A[i].T @ (gamma[i] * model.b[i] - y_array[i])
+            + 1 / alpha[i] * x_k_array[i]
+        )
+                
+        x.extend(np.linalg.solve(A, b))
+            
+    x = np.array(x)
+    
+    return x
 
 
 ###################################################################################################
@@ -361,6 +342,7 @@ def TrackingADMM(num_steps: int,
         x_err: float - Distance to the actual solution.
         F_err: float - Function error.
         cons_err: float - Constraints error.
+        ts: np.ndarray - Sequence of time taken for previous iterations.
     """
     
     if isinstance(model, ExampleModel):
@@ -395,12 +377,18 @@ def TrackingADMM(num_steps: int,
     F_err = np.zeros(num_steps) # function error
     cons_err = np.zeros(num_steps) # constraints error
     
+    ts = []
+    start = time.time()
+    
     for i in range(num_steps):
         # algorithm step
         x_prev = x
-        x = get_argmin_TrackingADMM(x_prev, d, lmbd, c, model, mode='newton')
+        x = get_argmin_TrackingADMM(x_prev, d, lmbd, c, model)
         d = W @ d + A_d @ (x - x_prev)
         lmbd = W @ lmbd + c * d
+        
+        end = time.time()
+        ts.append(end - start)
         
         # add values to the logs
         if isinstance(model, VFL):
@@ -411,7 +399,7 @@ def TrackingADMM(num_steps: int,
         F_err[i] = abs(model.F(x) - F_star) # |F(x) - F*|
         cons_err[i] = np.linalg.norm(model.A_hstacked @ x - model.b_sum) # ||bA @ x - bb||_2
         
-    return x, x_err, F_err, cons_err  
+    return x, x_err, F_err, cons_err, ts
 
 #--------------------------------------------------------------------------------------------------
 
@@ -420,8 +408,7 @@ def get_argmin_TrackingADMM_example(x_k: np.ndarray,
                                     d_k: np.ndarray,
                                     lmbd_k: np.ndarray,
                                     c: float,
-                                    model: ExampleModel,
-                                    mode: str = 'newton'):
+                                    model: ExampleModel):
     """
     Solve argmin subproblem in Tracking-ADMM for our Example problem.
     As we have quadratic problem, we do just one step on Newton method.
@@ -433,44 +420,24 @@ def get_argmin_TrackingADMM_example(x_k: np.ndarray,
         lmbd_k: np.ndarray - Value of vector lmbd from previous step.
         c: float - Parameter for augmentation.
         model: VFL - Model with oracle, which gives F, grad_F, etc.
-        mode: str = 'newton' - Use newton or CVXPY.
     Returns:
         sol: np.ndarray - Solution for argmin subproblem.
     """
     # set variables to the paper notation
     W = np.kron(model.mixing_matrix, np.identity(model.m))
     A_d = model.bA
+        
+    A = model.bCT_bC + model.theta * np.identity(model.dim) + c * A_d.T @ A_d
     
-    if mode == 'newton':
-        # calculate gradient function
-        grad = lambda x: (
-            model.grad_F(x)
-            + A_d.T @ W @ lmbd_k
-            + c * A_d.T @ (A_d @ (x - x_k) + W @ d_k)
-        )
-        
-        # calculate hessian matrix
-        hess = lambda x: model.hess_F(x) + c * A_d.T @ A_d
-
-        # get a solution by one newton step
-        sol = x_k - np.linalg.inv(hess(x_k)) @ grad(x_k)
-        
-    elif mode == 'cvxpy':
-        x = cp.Variable(model.dim)
-        objective = cp.Minimize(
-            1/2 * cp.sum_squares(model.bC @ x - model.bd) 
-            + model.theta/2 * cp.sum_squares(x)
-            + (W @ lmbd_k).T @ A_d @ x
-            + c/2 * cp.sum_squares(A_d @ (x - x_k) + W @ d_k)
-        )
-        prob = cp.Problem(objective)
-        prob.solve()
-        sol = x.value
-        
-    else:
-        raise NotImplementedError
+    b = (
+        model.bCT_bd
+        - A_d.T @ W @ lmbd_k
+        + c * A_d.T @ (A_d @ x_k - W @ d_k)
+    )
     
-    return sol
+    x = np.linalg.solve(A, b)
+        
+    return x
 
 #--------------------------------------------------------------------------------------------------
 
@@ -500,35 +467,16 @@ def get_argmin_TrackingADMM_vfl(x_k: np.ndarray,
     W = np.kron(model.mixing_matrix, np.identity(model.m))
     A_d = model.bA
     
-    if mode == 'newton':
-        # calculate gradient function
-        grad = lambda x: (
-            model.grad_F(x)
-            + A_d.T @ W @ lmbd_k
-            + c * A_d.T @ (A_d @ (x - x_k) + W @ d_k)
-        )
-        
-        # calculate hessian matrix
-        hess = lambda x: model.hess_F(x) + c * A_d.T @ A_d
-
-        # get a solution by one newton step
-        sol = x_k - np.linalg.inv(hess(x_k)) @ grad(x_k)
-        
-    elif mode == 'cvxpy':
-        x = cp.Variable(model.dim)
-        objective = cp.Minimize(
-            1/2 * cp.sum_squares(model.bC @ x - model.bd) 
-            + model.theta/2 * cp.sum_squares(x)
-            + (W @ lmbd_k).T @ A_d @ x
-            + c/2 * cp.sum_squares(A_d @ (x - x_k) + W @ d_k)
-        )
-        prob = cp.Problem(objective)
-        prob.solve()
-        sol = x.value
-        
-    else:
-        raise NotImplementedError
+    A = model._hess_F + c * A_d.T @ A_d
     
-    return sol
+    b = (
+        model._rearrange_vector(np.hstack((model.l, np.zeros(model.n * model.d))))
+        - A_d.T @ W @ lmbd_k
+        + c * A_d.T @ (A_d @ x_k - W @ d_k)
+    )
+    
+    x = np.linalg.solve(A, b)
+    
+    return x
 
 ###################################################################################################
