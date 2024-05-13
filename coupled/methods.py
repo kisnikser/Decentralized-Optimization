@@ -33,7 +33,7 @@ def algorithm_1(num_steps: int,
     gamma_x = params.get('gamma_x', 1 / (2 * max(model.L_f + model.mu_f, 2 * model.mu_f * model.kappa_W)))
     gamma_y = params.get('gamma_y', gamma_x * (model.mu_A + model.L_A) / model.mu_W)
     
-    eta_x = params.get('eta_x', min(1 / (np.sqrt(2 * (model.mu_f**2 + model.mu_f * model.L_f))),
+    eta_x = params.get('eta_x', min(1 / np.sqrt(2 * (model.mu_f**2 + model.mu_f * model.L_f)),
                                     np.sqrt(gamma_x / (8 * model.mu_f * model.kappa_A))))
     eta_y = params.get('eta_y', min(model.L_A / (model.mu_f * np.sqrt(model.mu_W * model.L_W)),
                                     np.sqrt(gamma_x * model.mu_A * model.L_A / (4 * model.mu_f * model.mu_W * model.L_W))))
@@ -44,8 +44,21 @@ def algorithm_1(num_steps: int,
     alpha = params.get('alpha', min(1 / 2,
                                     eta_x * model.mu_f / 2,
                                     eta_y * model.mu_f * model.mu_W / (4 * model.L_A)))
+    
+    alpha = 0.01
+    
     beta = params.get('beta', max(1 - alpha / 2,
                                   1 - eta_z * gamma_x * model.mu_A / 2))
+    
+    print('gamma_x', gamma_x)
+    print('gamma_y', gamma_y)
+    
+    print('eta_x', eta_x)
+    print('eta_y', eta_y)
+    print('eta_z', eta_z)
+    
+    print('alpha', alpha)
+    print('beta', beta)
 
     # set the initial point
     x = np.zeros(model.dim)
@@ -59,7 +72,8 @@ def algorithm_1(num_steps: int,
     
     # get CVXPY solution
     x_star, F_star = model.solution
-    #_, w_star = model._split_vector(x_star)
+    if isinstance(model, VFL):
+        _, w_star = model._split_vector(x_star)
 
     # logging
     x_err = np.zeros(num_steps) # distance
@@ -94,9 +108,11 @@ def algorithm_1(num_steps: int,
         y = y_next
         
         # add values to the logs
-        #_, w = model._split_vector(x)
-        #x_err[i] = np.linalg.norm(w - w_star)**2 # ||x - x*||_2^2
-        x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
+        if isinstance(model, VFL):
+            _, w = model._split_vector(x)
+            x_err[i] = np.linalg.norm(w - w_star)**2 # ||w - w*||_2^2
+        else:
+            x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
         F_err[i] = abs(model.F(x) - F_star) # |F(x) - F*|
         cons_err[i] = np.linalg.norm(model.A_hstacked @ x - model.b_sum) # ||A @ x - b||_2
         primal_dual_err[i] = np.linalg.norm(model.grad_G_x(x, y) - model.bA.T @ z) # |||grad_G_x(x, y) - bA.T @ z|_2
@@ -162,6 +178,8 @@ def DPMM(num_steps: int,
     
     # get CVXPY solution
     x_star, F_star = model.solution
+    if isinstance(model, VFL):
+        _, w_star = model._split_vector(x_star)
     
     # logging
     x_err = np.zeros(num_steps) # distance
@@ -178,7 +196,11 @@ def DPMM(num_steps: int,
         y = y_hat + Gamma @ (Lambda_prev - Lambda)
         
         # add values to the logs
-        x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
+        if isinstance(model, VFL):
+            _, w = model._split_vector(x)
+            x_err[i] = np.linalg.norm(w - w_star)**2 # ||w - w*||_2^2
+        else:
+            x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
         F_err[i] = abs(model.F(x) - F_star) # |F(x) - F*|
         cons_err[i] = np.linalg.norm(model.A_hstacked @ x - model.b_sum) # ||bA @ x - bb||_2
         
@@ -368,6 +390,8 @@ def TrackingADMM(num_steps: int,
     
     # get CVXPY solution
     x_star, F_star = model.solution
+    if isinstance(model, VFL):
+        _, w_star = model._split_vector(x_star)
     
     # logging
     x_err = np.zeros(num_steps) # distance
@@ -382,7 +406,11 @@ def TrackingADMM(num_steps: int,
         lmbd = W @ lmbd + c * d
         
         # add values to the logs
-        x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
+        if isinstance(model, VFL):
+            _, w = model._split_vector(x)
+            x_err[i] = np.linalg.norm(w - w_star)**2 # ||w - w*||_2^2
+        else:
+            x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
         F_err[i] = abs(model.F(x) - F_star) # |F(x) - F*|
         cons_err[i] = np.linalg.norm(model.A_hstacked @ x - model.b_sum) # ||bA @ x - bb||_2
         
