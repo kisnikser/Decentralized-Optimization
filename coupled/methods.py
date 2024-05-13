@@ -98,8 +98,8 @@ def algorithm_1(num_steps: int,
         #x_err[i] = np.linalg.norm(w - w_star)**2 # ||x - x*||_2^2
         x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
         F_err[i] = abs(model.F(x) - F_star) # |F(x) - F*|
-        cons_err[i] = np.linalg.norm(model.A_hstacked @ x - model.b_sum) # ||bA @ x - bb||_2
-        primal_dual_err[i] = np.linalg.norm(model.grad_G_x(x, y) - model.bA.T @ z) # |||gradG_x(x, y) - bA.T @ z|_2
+        cons_err[i] = np.linalg.norm(model.A_hstacked @ x - model.b_sum) # ||A @ x - b||_2
+        primal_dual_err[i] = np.linalg.norm(model.grad_G_x(x, y) - model.bA.T @ z) # |||grad_G_x(x, y) - bA.T @ z|_2
         
     return x, x_err, F_err, cons_err, primal_dual_err
 

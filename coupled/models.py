@@ -210,7 +210,7 @@ class Model:
         Args:
             x: Optional[np.ndarray] = None - Vector of primal variables.
         Returns:
-            Function hessian at point bx.
+            Function hessian at point x.
         """
         raise NotImplementedError
 
@@ -377,11 +377,7 @@ class VFL(Model):
         num_features = feature_matrix.shape[1]
         num_cons = feature_matrix.shape[0]
         
-        # we will split features in the following way:
-        # device 1: num_features // n # + num_features % n???
-        # device 2: num_features // n
-        # ...
-        # device n: num_features // n
+        assert num_features % num_nodes == 0, "Number of features must be divided by number of devices"
         
         d = num_features // num_nodes      
         
@@ -409,7 +405,7 @@ class VFL(Model):
     @staticmethod
     def split_number(m, n):
         """
-        Divide m among n devices.
+        Divide m between n devices.
         """
         # Calculate the quotient and remainder of m divided by n
         quotient = m // n
@@ -537,17 +533,14 @@ class VFL(Model):
             # in this case vector x = col(x_1, ..., x_n)
             # x_i = col(w_i, z_i),  i = 1, ..., n
             
-            dimensions = [self.d + self.num_samples[i] for i in range(self.n)]
-            cumsum = np.cumsum([0, *dimensions])
+            xs = np.split(x, np.cumsum(self.dimensions)[:-1])
+
             z = []
             w = []
                         
-            for i in range(self.n):
-                left = cumsum[i]
-                right = cumsum[i+1]
-                x_i = x[left:right]
-                w.append(x_i[:self.d])
-                z.append(x_i[self.d:])
+            for x in xs:
+                w.append(x[:self.d])
+                z.append(x[self.d:])
             
             z = np.hstack(z)
             w = np.hstack(w)
@@ -567,29 +560,29 @@ class VFL(Model):
             g_initial: np.ndarray - Vector in the initial form of primal variables.
         """
         
-        z = g[:self.m]
-        w = g[self.m:]
+        g_z = g[:self.m]
+        g_w = g[self.m:]
     
         if not self.labels_distribution:
             # in this case vector x = col(x_1, ..., x_n)
             # x_1 = col(w_1, z)
             # x_i = w_i,  i = 2, ..., n
-            w_1 = w[:self.d]
-            x_1 = np.hstack((w_1, z))
-            g_initial = np.hstack((x_1, w[self.d:]))
+            
+            g_w_1 = g_w[:self.d]
+            g_x_1 = np.hstack((g_w_1, g_z))
+            g_initial = np.hstack((g_x_1, g_w[self.d:]))
+            
         else:
             # in this case vector x = col(x_1, ..., x_n)
             # x_i = col(w_i, z_i),  i = 1, ..., n
-            cumsum = np.cumsum([0, *self.num_samples])
+    
             g_initial = []
+            g_zs = np.split(g_z, np.cumsum(self.num_samples)[:-1])
+            g_ws = np.split(g_w, self.n)
                         
-            for i in range(self.n):
-                left = cumsum[i]
-                right = cumsum[i+1]
-                z_i = z[left:right]
-                w_i = w[i*self.d:i*self.d+self.d]
-                x_i = np.hstack((w_i, z_i))
-                g_initial.append(x_i)
+            for (g_z_i, g_w_i) in zip(g_zs, g_ws):
+                g_x_i = np.hstack((g_w_i, g_z_i))
+                g_initial.append(g_x_i)
             
             g_initial = np.hstack(g_initial)
     
@@ -609,16 +602,16 @@ class VFL(Model):
             H_initial: np.ndarray - Block matrix in the initial form of primal variables.
         """
         
-        z = H[:self.m, :self.m]
-        w = H[self.m:, self.m:]
+        H_z = H[:self.m, :self.m]
+        H_w = H[self.m:, self.m:]
     
         if not self.labels_distribution:
             # in this case vector x = col(x_1, ..., x_n)
             # x_1 = col(w_1, z)
             # x_i = w_i,  i = 2, ..., n
-            w_1 = w[:self.d, :self.d]
-            x_1 = sp.linalg.block_diag(w_1, z)
-            H_initial = sp.linalg.block_diag(x_1, w[self.d:, self.d:])
+            H_w_1 = H_w[:self.d, :self.d]
+            H_x_1 = sp.linalg.block_diag(H_w_1, H_z)
+            H_initial = sp.linalg.block_diag(H_x_1, H_w[self.d:, self.d:])
         else:
             # in this case vector x = col(x_1, ..., x_n)
             # x_i = col(w_i, z_i),  i = 1, ..., n
@@ -628,10 +621,10 @@ class VFL(Model):
             for i in range(self.n):
                 left = cumsum[i]
                 right = cumsum[i+1]
-                z_i = z[left:right, left:right]
-                w_i = w[i*self.d:i*self.d+self.d, i*self.d:i*self.d+self.d]
-                x_i = sp.linalg.block_diag(w_i, z_i)
-                H_initial.append(x_i)
+                H_z_i = H_z[left:right, left:right]
+                H_w_i = H_w[i*self.d:i*self.d+self.d, i*self.d:i*self.d+self.d]
+                H_x_i = sp.linalg.block_diag(H_w_i, H_z_i)
+                H_initial.append(H_x_i)
             
             H_initial = sp.linalg.block_diag(*H_initial)
 
