@@ -44,9 +44,6 @@ def algorithm_1(num_steps: int,
     alpha = params.get('alpha', min(1 / 2,
                                     eta_x * model.mu_f / 2,
                                     eta_y * model.mu_f * model.mu_W / (4 * model.L_A)))
-    
-    alpha = 0.01
-    
     beta = params.get('beta', max(1 - alpha / 2,
                                   1 - eta_z * gamma_x * model.mu_A / 2))
     
