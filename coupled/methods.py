@@ -61,8 +61,6 @@ def algorithm_1(num_steps: int,
     
     # get CVXPY solution
     x_star, F_star = model.solution
-    if isinstance(model, VFL):
-        _, w_star = model._split_vector(x_star)
 
     # logging
     x_err = np.zeros(num_steps) # distance
@@ -103,11 +101,7 @@ def algorithm_1(num_steps: int,
         ts.append(end - start)
         
         # add values to the logs
-        if isinstance(model, VFL):
-            _, w = model._split_vector(x)
-            x_err[i] = np.linalg.norm(w - w_star)**2 # ||w - w*||_2^2
-        else:
-            x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
+        x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
         F_err[i] = abs(model.F(x) - F_star) # |F(x) - F*|
         cons_err[i] = np.linalg.norm(model.A_hstacked @ x - model.b_sum) # ||A @ x - b||_2
         primal_dual_err[i] = np.linalg.norm(model.grad_G_x(x, y) - model.bA.T @ z) # |||grad_G_x(x, y) - bA.T @ z|_2
@@ -174,8 +168,6 @@ def DPMM(num_steps: int,
     
     # get CVXPY solution
     x_star, F_star = model.solution
-    if isinstance(model, VFL):
-        _, w_star = model._split_vector(x_star)
     
     # logging
     x_err = np.zeros(num_steps) # distance
@@ -198,11 +190,7 @@ def DPMM(num_steps: int,
         ts.append(end - start)
         
         # add values to the logs
-        if isinstance(model, VFL):
-            _, w = model._split_vector(x)
-            x_err[i] = np.linalg.norm(w - w_star)**2 # ||w - w*||_2^2
-        else:
-            x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
+        x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
         F_err[i] = abs(model.F(x) - F_star) # |F(x) - F*|
         cons_err[i] = np.linalg.norm(model.A_hstacked @ x - model.b_sum) # ||bA @ x - bb||_2
         
@@ -358,7 +346,7 @@ def TrackingADMM(num_steps: int,
     
     # set algorithm parameters
     params = {} if params is None else params
-    c = params.get('c', 1e-3)
+    c = params.get('c', 1e-6)
     assert c > 0, "Parameter c must be greater than 0"
     
     # set the initial point
@@ -369,8 +357,6 @@ def TrackingADMM(num_steps: int,
     
     # get CVXPY solution
     x_star, F_star = model.solution
-    if isinstance(model, VFL):
-        _, w_star = model._split_vector(x_star)
     
     # logging
     x_err = np.zeros(num_steps) # distance
@@ -391,11 +377,7 @@ def TrackingADMM(num_steps: int,
         ts.append(end - start)
         
         # add values to the logs
-        if isinstance(model, VFL):
-            _, w = model._split_vector(x)
-            x_err[i] = np.linalg.norm(w - w_star)**2 # ||w - w*||_2^2
-        else:
-            x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
+        x_err[i] = np.linalg.norm(x - x_star)**2 # ||x - x*||_2^2
         F_err[i] = abs(model.F(x) - F_star) # |F(x) - F*|
         cons_err[i] = np.linalg.norm(model.A_hstacked @ x - model.b_sum) # ||bA @ x - bb||_2
         
@@ -478,5 +460,198 @@ def get_argmin_TrackingADMM_vfl(x_k: np.ndarray,
     x = np.linalg.solve(A, b)
     
     return x
+
+
+###################################################################################################
+
+
+def intermediate(num_steps: int, 
+                 model: Model, 
+                 params: Dict[str, float] = None):
+    """
+    Intermediate algorithm from the paper 
+    "An Optimal Algorithm for Strongly Convex Minimization under Affine Constraints", 2022.
+    It is a variant of the PAPC algorithm with Nesterov acceleration.
+    
+    Args:
+        num_steps: int - Number of optimizer steps.
+        model: Model - Model with oracle, which gives F, grad_F, etc.
+        params: Dict[str, float] = None - Algorithm parameters.
+    Returns:
+        x: float - Solution.
+        x_err: np.ndarray - Sequence of distances to the actual solution.
+        F_err: np.ndarray - Sequence of function error.
+        cons_err: np.ndarray - Sequence of constraints error.
+        primal_dual_err: np.ndarray - Sequence of primal-dual optimality condition error.
+    """
+    # set variables to the paper notation
+    # "An Optimal Algorithm for Strongly Convex Minimization under Affine Constraints", 2022
+    K = np.hstack((model.bA, model.W_times_I))
+    W = K.T @ K
+    b = model.bb
+    
+    # set algorithm parameters
+    lambda1 = utils.lambda_max(W) # can be chosen as lambda1 >= lambda_max
+    lambda2 = utils.lambda_min_plus(W) # can be chosen as 0 < lambda2 <= lambda_min_plus
+    chi = lambda1 / lambda2 # condition number of the W = K.T @ K
+    params = {} if params is None else params
+    tau = params.get('tau', min(1, 1/2 * np.sqrt(chi/model.kappa_f)))
+    assert tau >= 0, "The parameter tau must be greater than 0"
+    assert tau <= 1, "The parameter tau must be less than 1"
+    eta = params.get('eta', 1 / (4*tau*model.L_f))
+    theta = params.get('theta', 1 / (eta*lambda1))
+    alpha = params.get('alpha', model.mu_f)
+    assert alpha > 0, "The parameter alpha must be greater than 0"
+
+    # set the initial point
+    #x_f = x = np.zeros(model.dim)
+    xz_f = xz = np.zeros(model.dim + model.n * model.m) # for augmented function
+    y = np.zeros(model.n * model.m)
+    
+    # get CVXPY solution
+    x_star, F_star = model.solution
+    
+    # logging
+    x_err = np.zeros(num_steps) # distance
+    F_err = np.zeros(num_steps) # function error
+    cons_err = np.zeros(num_steps) # constraints error
+    primal_dual_err = np.zeros(num_steps) # primal-dual optimality condition error
+    
+    ts = []
+    start = time.time()
+    
+    for i in range(num_steps):
+        xz_prev = xz # previous point
+        xz_g = tau * xz + (1 - tau) * xz_f # point for gradient
+        g = model.grad_G(xz_g[:model.dim], xz_g[model.dim:]) # calculate gradient of the augmented function
+        xz_half = 1 / (1 + eta * alpha) * (xz - eta * (g - alpha * xz_g + K.T @ y)) # half point
+        y = y + theta * (K @ xz_half - b)
+        xz = 1 / (1 + eta * alpha) * (xz - eta * (g - alpha * xz_g + K.T @ y)) # next point
+        xz_f = xz_g + 2 * tau / (2 - tau) * (xz - xz_prev) # point for function
+        
+        end = time.time()
+        ts.append(end - start)
+        
+        # add values to the logs
+        x_f = xz_f[:model.dim]
+        x_err[i] = np.linalg.norm(x_f - x_star)**2 # ||x_f - x*||_2^2
+        F_err[i] = abs(model.F(x_f) - F_star) # |F(x_f) - F*|
+        cons_err[i] = np.linalg.norm(K @ xz_f - b) # ||K @ xz_f - b||_2
+        primal_dual_err[i] = np.linalg.norm(K.T @ y + model.grad_G(x_f, xz_f[model.dim:]))
+        
+    return x_f, x_err, F_err, cons_err, primal_dual_err, ts
+
+
+###################################################################################################
+
+
+def chebyshev(z_0, K, b, N, lambda1, lambda2):
+    """
+    Chebyshev iteration.
+    
+    Args:
+        z_0: np.ndarray - Initial point.
+        K: np.ndarray - Matrix K (see notation in paper).
+        b: np.ndarray - Vector b (see notation in paper).
+        N: int - Number of steps.
+        lambda1: float - first parameter (m.b. max eigenvalue).
+        lambda2: float - second parameter (m.b. min positive eigenvalue).
+    Returns:
+        z: np.ndarray - Point after N steps.
+    """
+    assert lambda1 > 0, "lambda1 must be greater than 0"
+    assert lambda2 > 0, "lambda2 must be greater than 0"
+    
+    rho = (lambda1 - lambda2)**2 / 16
+    nu = (lambda1 + lambda2) / 2
+    
+    gamma = - nu / 2
+    p = - K.T @ (K @ z_0 - b) / nu
+    z = z_0 + p
+        
+    for _ in range(1, N):
+        beta = rho / gamma
+        gamma = - (nu + beta)
+        p = (K.T @ (K @ z - b) + beta * p) / gamma
+        z = z + p
+            
+    return z
+
+#--------------------------------------------------------------------------------------------------
+
+def salim(num_steps: int, 
+          model: Model, 
+          params: Dict[str, float] = None):
+    """
+    Proposed algorithm 1 from the paper 
+    "An Optimal Algorithm for Strongly Convex Minimization under Affine Constraints", 2022.
+    
+    Args:
+        num_steps: int - Number of optimizer steps.
+        model: Model - Model with oracle, which gives F, grad_F, etc.
+        params: Dict[str, float] = None - Algorithm parameters.
+    Returns:
+        x: float - Solution.
+        x_err: float - Distance to the actual solution.
+        F_err: float - Function error.
+        cons_err: float - Constraints error.
+    """
+    # set variables to the paper notation
+    # "An Optimal Algorithm for Strongly Convex Minimization under Affine Constraints", 2022
+    K = np.hstack((model.bA, model.W_times_I))
+    W = K.T @ K
+    b = model.bb
+    
+    # set algorithm parameters
+    lambda1 = utils.lambda_max(W) # can be chosen as lambda1 >= lambda_max
+    lambda2 = utils.lambda_min_plus(W) # can be chosen as 0 < lambda2 <= lambda_min_plus
+    chi = lambda1 / lambda2 # condition number of the W = K.T @ K
+    params = {} if params is None else params
+    tau = params.get('tau', min(1, 1/2 * np.sqrt(19/(15*model.kappa_f))))
+    assert tau >= 0, "The parameter tau must be greater than 0"
+    assert tau <= 1, "The parameter tau must be less than 1"
+    eta = params.get('eta', 1 / (4*tau*model.L_f))
+    theta = params.get('theta', 15 / (19*eta))
+    alpha = params.get('alpha', model.mu_f)
+    assert alpha > 0, "The parameter alpha must be greater than 0"
+    N = int(np.sqrt(chi)) + 1 # can be chosen as N >= sqrt(chi)
+
+    # set the initial point
+    #x_f = x = np.zeros(model.dim)
+    xz_f = xz = np.zeros(model.dim + model.n * model.m) # for augmented function
+    u = np.zeros(model.dim + model.n * model.m)
+    
+    # get CVXPY solution
+    x_star, F_star = model.solution
+    
+    # logging
+    x_err = np.zeros(num_steps) # distance
+    F_err = np.zeros(num_steps) # function error
+    cons_err = np.zeros(num_steps) # constraints error
+    
+    ts = []
+    start = time.time()
+    
+    for i in range(num_steps):
+        xz_prev = xz # previous point
+        xz_g = tau * xz + (1 - tau) * xz_f # point for gradient
+        g = model.grad_G(xz_g[:model.dim], xz_g[model.dim:]) # calculate gradient of the augmented function
+        xz_half = 1 / (1 + eta * alpha) * (xz - eta * (g - alpha * xz_g + u)) # half point
+        r = theta * (xz_half - chebyshev(xz_half, K, b, N, lambda1, lambda2))
+        u = u + r
+        xz = xz_half - eta / (1 + eta * alpha) * r # next point
+        xz_f = xz_g + 2 * tau / (2 - tau) * (xz - xz_prev) # point for function
+        
+        end = time.time()
+        ts.append(end - start)
+        
+        # add values to the logs
+        x_f = xz_f[:model.dim]
+        x_err[i] = np.linalg.norm(x_f - x_star)**2 # ||x_f - x*||_2^2
+        F_err[i] = abs(model.F(x_f) - F_star) # |F(x_f) - \tilde{F}*|
+        cons_err[i] = np.linalg.norm(K @ xz_f - b) # ||K @ xz_f - b||_2
+        
+    return x_f, x_err, F_err, cons_err, ts  
+
 
 ###################################################################################################

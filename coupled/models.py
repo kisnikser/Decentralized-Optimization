@@ -205,6 +205,17 @@ class Model:
         return self.r * (self.bA @ x + y - self.bb)
     
     
+    def grad_G(self, x, y):
+        """
+        Args:
+            x: np.ndarray - Vector of primal variables.
+            y: np.ndarray - Vector of additional variables.
+        Returns:
+            Augmented function gradient at point (x, y).
+        """
+        return np.hstack((self.grad_G_x(x, y), self.grad_G_y(x, y)))
+
+    
     def hess_F(self, x: Optional[np.ndarray] = None):
         """
         Args:
@@ -355,6 +366,7 @@ class VFL(Model):
     """
     def __init__(self,
                  num_nodes: int,
+                 lmbd: float = 1e-3,
                  title: str = 'mushrooms',
                  train_size: float = 0.7,
                  graph: str = 'ring',
@@ -364,6 +376,7 @@ class VFL(Model):
         """
         Args:
             num_nodes: int - Number of nodes in the graph (n).
+            lmnd: float = 1e-3 - Regularization parameter.
             title: str = 'mushrooms' - Title of the dataset
             train_size: float = 0.7 - Train sample part
             graph: str = 'ring' - Network graph model.
@@ -387,7 +400,7 @@ class VFL(Model):
         
         self.Features = np.split(feature_matrix, self.n, axis=1) # [bF_1,  ..., bF_n]
         self.l = labels # l
-        self.lmbd = 1e-3 # lambda - regularization parameter
+        self.lmbd = lmbd # lambda - regularization parameter
         
         self.bF = np.hstack(self.Features)
         
@@ -434,11 +447,27 @@ class VFL(Model):
             labels: np.ndarray - Vector of labels from train part of the dataset
         """
         
-        if title == 'mushrooms':
+        if title == 'mushrooms': # (8124, 112)
             dataset = '../data/mushrooms.txt'
             data = load_svmlight_file(dataset)
             X, y = data[0].toarray(), data[1]
             y = 2 * y - 3 # -1 and 1
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, train_size=train_size, random_state=42
+            )
+            
+        elif title == 'a9a': # (32561, 123)
+            dataset = '../data/a9a.txt'
+            data = load_svmlight_file(dataset)
+            X, y = data[0].toarray(), data[1]
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, train_size=train_size, random_state=42
+            )
+        
+        elif title == 'w8a': # (49749, 300)
+            dataset = '../data/w8a.txt'
+            data = load_svmlight_file(dataset)
+            X, y = data[0].toarray(), data[1]
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y, train_size=train_size, random_state=42
             )
@@ -640,6 +669,7 @@ class VFL(Model):
         """
         z, w = self._split_vector(x)
         return 1 / 2 * np.linalg.norm(z - self.l)**2 + self.lmbd * np.linalg.norm(w)**2
+        #return 1 / 2 * np.linalg.norm(self.bF @ w - self.l)**2 + self.lmbd * np.linalg.norm(w)**2
         
     
     def grad_F(self, x):
