@@ -139,19 +139,19 @@ def plot_logs(x_err, F_err, cons_err, title):
     ax[0].plot(x_err)
     ax[0].set_yscale('log')
     ax[0].set_xlabel("Iterarion number")
-    ax[0].set_ylabel(r"$\| \mathbf{x}^k - \mathbf{x}^* \|_2^2$")
+    ax[0].set_ylabel(r"$\| x^k - x^* \|_2^2$")
     ax[0].set_title("Primal variable error")
 
     ax[1].plot(F_err)
     ax[1].set_yscale('log')
     ax[1].set_xlabel("Iterarion number")
-    ax[1].set_ylabel(r"$|\tilde{F}(\mathbf{x}^k) - \tilde{F}^*|$")
+    ax[1].set_ylabel(r"$|F(x^k) - F^*|$")
     ax[1].set_title("Function error")
 
     ax[2].plot(cons_err)
     ax[2].set_yscale('log')
     ax[2].set_xlabel("Iterarion number")
-    ax[2].set_ylabel(r"$\| \mathbf{A}' \mathbf{x}^k + \mathbf{W} \mathbf{z}^k - \mathbf{b}' \|_2$")
+    ax[2].set_ylabel(r"$\| \sum\limits_{i=1}^{n} (A_i x_i^k - b_i) \|_2$")
     ax[2].set_title("Constraints error")
 
     plt.suptitle(title, fontsize=24)
@@ -168,27 +168,89 @@ def plot_logs_pd(x_err, F_err, cons_err, primal_dual_err, title):
     ax[0][0].plot(x_err)
     ax[0][0].set_yscale('log')
     ax[0][0].set_xlabel("Iterarion number")
-    ax[0][0].set_ylabel(r"$\| \mathbf{x}^k - \mathbf{x}^* \|_2^2$")
+    ax[0][0].set_ylabel(r"$\| x^k - x^* \|_2^2$")
     ax[0][0].set_title("Primal variable error")
 
     ax[0][1].plot(F_err)
     ax[0][1].set_yscale('log')
     ax[0][1].set_xlabel("Iterarion number")
-    ax[0][1].set_ylabel(r"$|\tilde{F}(\mathbf{x}^k) - \tilde{F}^*|$")
+    ax[0][1].set_ylabel(r"$|F(x^k) - F^*|$")
     ax[0][1].set_title("Function error")
 
     ax[1][0].plot(cons_err)
     ax[1][0].set_yscale('log')
     ax[1][0].set_xlabel("Iterarion number")
-    ax[1][0].set_ylabel(r"$\| \mathbf{A}' \mathbf{x}^k + \mathbf{W} \mathbf{z}^k - \mathbf{b}' \|_2$")
+    ax[1][0].set_ylabel(r"$\| \sum\limits_{i=1}^{n} (A_i x_i^k - b_i) \|_2$")
     ax[1][0].set_title("Constraints error")
-    
+
     ax[1][1].plot(primal_dual_err)
     ax[1][1].set_yscale('log')
     ax[1][1].set_xlabel("Iterarion number")
-    ax[1][1].set_ylabel(r"$\| K^\top \mathbf{y}^k + \nabla \tilde{F}(\mathbf{x}^k) \|_2$")
+    ax[1][1].set_ylabel(r"$\| \nabla_x G(x^k, y^k) - \mathbf{A}^\top z^k \|_2 $")
     ax[1][1].set_title("Primal-Dual error")
 
     plt.suptitle(title, fontsize=24)
+    plt.tight_layout()
+    plt.show()
+    
+    
+def plot_comparison_iteration(results):
+    
+    fig, ax = plt.subplots(1, 3, figsize=(18, 5))
+
+    for name in results.keys():
+        ax[0].plot(results[name]['x_err'], label=name)
+    ax[0].set_yscale('log')
+    ax[0].set_xlabel("Iterarion number")
+    ax[0].set_ylabel(r"$\| x^k - x^* \|_2^2$")
+    ax[0].set_title("Primal variable error")
+
+    for name in results.keys():
+        ax[1].plot(results[name]['F_err'], label=name)
+    ax[1].set_yscale('log')
+    ax[1].set_xlabel("Iterarion number")
+    ax[1].set_ylabel(r"$|F(x^k) - F^*|$")
+    ax[1].set_title("Function error")
+
+    for name in results.keys():
+        ax[2].plot(results[name]['cons_err'], label=name)
+    ax[2].set_yscale('log')
+    ax[2].set_xlabel("Iterarion number")
+    ax[2].set_ylabel(r"$\| \sum\limits_{i=1}^{n} (A_i x_i^k - b_i) \|_2$")
+    ax[2].set_title("Constraints error")
+    
+    plt.legend(bbox_to_anchor=(1, 0.5), loc="center left")
+    plt.suptitle('Comparison', fontsize=24)
+    plt.tight_layout()
+    plt.show()
+    
+    
+def plot_comparison_time(results):
+    
+    fig, ax = plt.subplots(1, 3, figsize=(18, 5))
+
+    for name in results.keys():
+        ax[0].plot(results[name]['ts'], results[name]['x_err'], label=name)
+    ax[0].set_yscale('log')
+    ax[0].set_xlabel("Time, s")
+    ax[0].set_ylabel(r"$\| x^k - x^* \|_2^2$")
+    ax[0].set_title("Primal variable error")
+
+    for name in results.keys():
+        ax[1].plot(results[name]['ts'], results[name]['F_err'], label=name)
+    ax[1].set_yscale('log')
+    ax[1].set_xlabel("Time, s")
+    ax[1].set_ylabel(r"$|F(x^k) - F^*|$")
+    ax[1].set_title("Function error")
+
+    for name in results.keys():
+        ax[2].plot(results[name]['ts'], results[name]['cons_err'], label=name)
+    ax[2].set_yscale('log')
+    ax[2].set_xlabel("Time, s")
+    ax[2].set_ylabel(r"$\| \sum\limits_{i=1}^{n} (A_i x_i^k - b_i) \|_2$")
+    ax[2].set_title("Constraints error")
+
+    plt.legend(bbox_to_anchor=(1, 0.5), loc="center left")
+    plt.suptitle('Comparison', fontsize=24)
     plt.tight_layout()
     plt.show()

@@ -67,6 +67,10 @@ class Model:
         self._L_f = None # gradient Lipschitz constant for the function
         self._kappa_f = None # condition number of the function
         
+        self._mu_G = None # strongly convexity constant for the augmented function
+        self._L_G = None # gradient Lipschitz constant for the augmented function
+        self._kappa_G = None # condition number of the augmented function
+        
         self._mu_A = None # strongly convexity constant A
         self._L_A = None # gradient Lipschitz constant A
         self._kappa_A = None # condition number A
@@ -146,6 +150,42 @@ class Model:
         if self._r is None:
             self._r = self.mu_f / (2 * self.L_A)
         return self._r
+    
+    ### PARAMETERS OF AUGMENTED FUNCTION
+    
+    @property
+    def mu_G(self) -> float:
+        """
+        Returns:
+            mu_G: float - Strongly convexity constant of the augmented function.
+        """
+        if self._mu_G is None:
+            mu_Phi = self.mu_f + self.r # minimum eigenvalue of function Phi(x, y) >= mu_f + r
+            s2min_plus = utils.get_s2min_plus(self.bB)
+            self._mu_G = mu_Phi * s2min_plus # mu_G >= mu_Phi * s2min_plus(bB)
+        return self._mu_G
+    
+    @property
+    def L_G(self) -> float:
+        """
+        Returns:
+            L_G: float - gradient Lipschitz constant of the augmented function.
+        """
+        if self._L_G is None:
+            L_Phi = self.L_f + self.r # maximum eigenvalue of function Phi(x, y) <= L_f + r
+            s2max = utils.get_s2max(self.bB)
+            self._L_G = L_Phi * s2max # L_G <= L_Phi * sigma^2_max(B)
+        return self._L_G
+    
+    @property
+    def kappa_G(self) -> float:
+        """
+        Returns:
+            kappa_G: float - Condition number of the augmented function.
+        """
+        if self._kappa_G is None:
+            self._kappa_G = self.L_G / self.mu_G
+        return self._kappa_G
     
     ### ORACLE
     
@@ -281,6 +321,10 @@ class ExampleModel(Model):
 
         self.bA = sp.linalg.block_diag(*self.A) # bA = diag(A_1, ..., A_n)
         self.bb = np.hstack(self.b) # bb = col(b_1, ..., b_n)       
+
+        # stacked matrix for constraints
+        self.bB = np.block([[np.identity(self.dim), np.zeros((self.dim, self.n * self.m))],
+                            [self.bA, np.identity(self.n * self.m)]])
 
         self.A_hstacked = np.hstack(self.A)
         self.b_sum = np.sum(self.b, axis=0)
@@ -532,6 +576,9 @@ class VFL(Model):
         #######
         self.bA = sp.linalg.block_diag(*self.A) # bA = diag(A_1, ..., A_n)
         self.bb = np.hstack(self.b) # bb = col(b_1, ..., b_n)       
+        # stacked matrix for constraints
+        self.bB = np.block([[np.identity(self.dim), np.zeros((self.dim, self.n * self.m))],
+                            [self.bA, np.identity(self.n * self.m)]])
         #######
         self.A_hstacked = np.hstack(self.A)
         self.b_sum = np.sum(self.b, axis=0)

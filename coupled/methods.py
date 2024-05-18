@@ -483,10 +483,12 @@ def intermediate(num_steps: int,
         F_err: np.ndarray - Sequence of function error.
         cons_err: np.ndarray - Sequence of constraints error.
         primal_dual_err: np.ndarray - Sequence of primal-dual optimality condition error.
+        ts: np.ndarray - Sequence of time taken for previous iterations.
     """
     # set variables to the paper notation
     # "An Optimal Algorithm for Strongly Convex Minimization under Affine Constraints", 2022
-    K = np.hstack((model.bA, model.W_times_I))
+    #K = np.hstack((model.bA, model.W_times_I))
+    K = np.hstack((model.bA, np.identity(model.n * model.m)))
     W = K.T @ K
     b = model.bb
     
@@ -495,12 +497,12 @@ def intermediate(num_steps: int,
     lambda2 = utils.lambda_min_plus(W) # can be chosen as 0 < lambda2 <= lambda_min_plus
     chi = lambda1 / lambda2 # condition number of the W = K.T @ K
     params = {} if params is None else params
-    tau = params.get('tau', min(1, 1/2 * np.sqrt(chi/model.kappa_f)))
+    tau = params.get('tau', min(1, 1/2 * np.sqrt(chi/model.kappa_G)))
     assert tau >= 0, "The parameter tau must be greater than 0"
     assert tau <= 1, "The parameter tau must be less than 1"
-    eta = params.get('eta', 1 / (4*tau*model.L_f))
+    eta = params.get('eta', 1 / (4*tau*model.L_G))
     theta = params.get('theta', 1 / (eta*lambda1))
-    alpha = params.get('alpha', model.mu_f)
+    alpha = params.get('alpha', model.mu_G)
     assert alpha > 0, "The parameter alpha must be greater than 0"
 
     # set the initial point
@@ -595,10 +597,12 @@ def salim(num_steps: int,
         x_err: float - Distance to the actual solution.
         F_err: float - Function error.
         cons_err: float - Constraints error.
+        ts: np.ndarray - Sequence of time taken for previous iterations.
     """
     # set variables to the paper notation
     # "An Optimal Algorithm for Strongly Convex Minimization under Affine Constraints", 2022
-    K = np.hstack((model.bA, model.W_times_I))
+    #K = np.hstack((model.bA, model.W_times_I))
+    K = np.hstack((model.bA, np.identity(model.n * model.m)))
     W = K.T @ K
     b = model.bb
     
@@ -607,12 +611,12 @@ def salim(num_steps: int,
     lambda2 = utils.lambda_min_plus(W) # can be chosen as 0 < lambda2 <= lambda_min_plus
     chi = lambda1 / lambda2 # condition number of the W = K.T @ K
     params = {} if params is None else params
-    tau = params.get('tau', min(1, 1/2 * np.sqrt(19/(15*model.kappa_f))))
+    tau = params.get('tau', min(1, 1/2 * np.sqrt(19/(15*model.kappa_G))))
     assert tau >= 0, "The parameter tau must be greater than 0"
     assert tau <= 1, "The parameter tau must be less than 1"
-    eta = params.get('eta', 1 / (4*tau*model.L_f))
+    eta = params.get('eta', 1 / (4*tau*model.L_G))
     theta = params.get('theta', 15 / (19*eta))
-    alpha = params.get('alpha', model.mu_f)
+    alpha = params.get('alpha', model.mu_G)
     assert alpha > 0, "The parameter alpha must be greater than 0"
     N = int(np.sqrt(chi)) + 1 # can be chosen as N >= sqrt(chi)
 
