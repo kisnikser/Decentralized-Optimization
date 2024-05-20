@@ -61,7 +61,7 @@ class Model:
             self.W = self.gossip_matrix
         
         Im = np.identity(self.m) # identity matrix of shape m
-        self.W_times_I = np.kron(self.W, Im) # bW = W x Im
+        self.bW = np.kron(self.W, Im) # bW = W x Im
         
         self._mu_f = None # strongly convexity constant for the function
         self._L_f = None # gradient Lipschitz constant for the function
@@ -80,6 +80,7 @@ class Model:
         self._kappa_W = None # condition number W
     
         self._r = None # augmentation parameter
+        self._gamma = None
   
     ### PARAMETERS OF FUNCTION
   
@@ -128,13 +129,13 @@ class Model:
     @property
     def mu_W(self) -> float:
         if self._mu_W is None:
-            self._mu_W = utils.lambda_min_plus(self.W)
+            self._mu_W = utils.lambda_min_plus(self.W) ** 2
         return self._mu_W
   
     @property
     def L_W(self) -> float:
         if self._L_W is None:
-            self._L_W = utils.lambda_max(self.W)
+            self._L_W = utils.lambda_max(self.W) ** 2
         return self._L_W
     
     @property
@@ -151,6 +152,14 @@ class Model:
             self._r = self.mu_f / (2 * self.L_A)
         return self._r
     
+    ### ???
+    
+    @property
+    def gamma(self) -> float:
+        if self._gamma is None:
+            self._gamma = np.sqrt((self.mu_A + self.L_A) / self.mu_W)
+        return self._gamma
+    
     ### PARAMETERS OF AUGMENTED FUNCTION
     
     @property
@@ -160,9 +169,7 @@ class Model:
             mu_G: float - Strongly convexity constant of the augmented function.
         """
         if self._mu_G is None:
-            mu_Phi = self.mu_f + self.r # minimum eigenvalue of function Phi(x, y) >= mu_f + r
-            s2min_plus = utils.get_s2min_plus(self.bB)
-            self._mu_G = mu_Phi * s2min_plus # mu_G >= mu_Phi * s2min_plus(bB)
+            self._mu_G = self.mu_f * min(1 / 2, (self.mu_A + self.L_A) / (4 * self.L_A))
         return self._mu_G
     
     @property
@@ -172,9 +179,8 @@ class Model:
             L_G: float - gradient Lipschitz constant of the augmented function.
         """
         if self._L_G is None:
-            L_Phi = self.L_f + self.r # maximum eigenvalue of function Phi(x, y) <= L_f + r
-            s2max = utils.get_s2max(self.bB)
-            self._L_G = L_Phi * s2max # L_G <= L_Phi * sigma^2_max(B)
+            self._L_G = max(self.L_f + self.mu_f,
+                            (self.mu_A + self.L_A) / self.L_A * self.L_W / self.mu_W)
         return self._L_G
     
     @property
@@ -209,7 +215,7 @@ class Model:
         """
         return (
             self.F(x)
-            + self.r / 2 * np.linalg.norm(self.bA @ x + y - self.bb)**2
+            + self.r / 2 * np.linalg.norm(self.bA @ x + self.gamma * self.bW @ y - self.bb)**2
         )
         
         
@@ -231,7 +237,7 @@ class Model:
         Returns:
             Augmented function gradient wrt x at point (x, y).
         """
-        return self.grad_F(x) + self.r * self.bA.T @ (self.bA @ x + y - self.bb)
+        return self.grad_F(x) + self.r * self.bA.T @ (self.bA @ x + self.gamma * self.bW @ y - self.bb)
     
     
     def grad_G_y(self, x, y):
@@ -242,7 +248,7 @@ class Model:
         Returns:
             Augmented function gradient wrt y at point (x, y).
         """
-        return self.r * (self.bA @ x + y - self.bb)
+        return self.r * self.gamma * self.bW @ (self.bA @ x + self.gamma * self.bW @ y - self.bb)
     
     
     def grad_G(self, x, y):
@@ -321,10 +327,6 @@ class ExampleModel(Model):
 
         self.bA = sp.linalg.block_diag(*self.A) # bA = diag(A_1, ..., A_n)
         self.bb = np.hstack(self.b) # bb = col(b_1, ..., b_n)       
-
-        # stacked matrix for constraints
-        self.bB = np.block([[np.identity(self.dim), np.zeros((self.dim, self.n * self.m))],
-                            [self.bA, np.identity(self.n * self.m)]])
 
         self.A_hstacked = np.hstack(self.A)
         self.b_sum = np.sum(self.b, axis=0)
@@ -492,7 +494,7 @@ class VFL(Model):
         """
         
         if title == 'mushrooms': # (8124, 112)
-            dataset = '../data/mushrooms.txt'
+            dataset = 'data/mushrooms.txt'
             data = load_svmlight_file(dataset)
             X, y = data[0].toarray(), data[1]
             y = 2 * y - 3 # -1 and 1
@@ -501,7 +503,7 @@ class VFL(Model):
             )
             
         elif title == 'a9a': # (32561, 123)
-            dataset = '../data/a9a.txt'
+            dataset = 'data/a9a.txt'
             data = load_svmlight_file(dataset)
             X, y = data[0].toarray(), data[1]
             X_train, X_test, y_train, y_test = train_test_split(
@@ -509,7 +511,7 @@ class VFL(Model):
             )
         
         elif title == 'w8a': # (49749, 300)
-            dataset = '../data/w8a.txt'
+            dataset = 'data/w8a.txt'
             data = load_svmlight_file(dataset)
             X, y = data[0].toarray(), data[1]
             X_train, X_test, y_train, y_test = train_test_split(
@@ -519,8 +521,8 @@ class VFL(Model):
         elif title == 'synthetic':
             # synthetic linear regression dataset
             
-            n_features = 3 * 1
-            n_samples = 3 * 10
+            n_features = 10 * 1
+            n_samples = 10 * 10
             
             mu_x = np.zeros(n_features)
             Sigma_x = np.identity(n_features)
@@ -576,9 +578,6 @@ class VFL(Model):
         #######
         self.bA = sp.linalg.block_diag(*self.A) # bA = diag(A_1, ..., A_n)
         self.bb = np.hstack(self.b) # bb = col(b_1, ..., b_n)       
-        # stacked matrix for constraints
-        self.bB = np.block([[np.identity(self.dim), np.zeros((self.dim, self.n * self.m))],
-                            [self.bA, np.identity(self.n * self.m)]])
         #######
         self.A_hstacked = np.hstack(self.A)
         self.b_sum = np.sum(self.b, axis=0)
@@ -761,23 +760,13 @@ class VFL(Model):
             x_star: Solution.
             F_star: Function value at solution.
         """
-        w = cp.Variable(self.n * self.d)
-        z = cp.Variable(self.m)
         
-        objective = cp.Minimize(
-            1/2 * cp.sum_squares(z - self.l) 
-            + self.lmbd * cp.sum_squares(w)
-        )
-        
-        constraints = [
-            self.bF @ w == z
-        ]
-        
-        prob = cp.Problem(objective, constraints)
-        prob.solve()
-        F_star = prob.value
-        
-        x_star = self._rearrange_vector(np.hstack((z.value, w.value)))
+        F, l, lmbd, n, d = self.bF, self.l, self.lmbd, self.n, self.d
+        # least squares
+        w_star = np.linalg.inv(F.T @ F + 2 * lmbd * np.identity(n * d)) @ F.T @ self.l
+        z_star = F @ w_star
+        x_star = self._rearrange_vector(np.hstack((z_star, w_star)))
+        F_star = self.F(x_star)
         
         return x_star, F_star
     
