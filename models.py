@@ -521,8 +521,8 @@ class VFL(Model):
         elif title == 'synthetic':
             # synthetic linear regression dataset
             
-            n_features = 10 * 1
-            n_samples = 10 * 10
+            n_features = 2 * 20
+            n_samples = 2 * 50
             
             mu_x = np.zeros(n_features)
             Sigma_x = np.identity(n_features)
