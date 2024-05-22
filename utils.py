@@ -130,25 +130,25 @@ def get_metropolis_weights(adjacency_matrix: np.ndarray) -> np.ndarray:
     return metropolis_weights
 
 
-def plot_logs(x_err, F_err, cons_err, title):
+def plot_logs(output, title):
     """
     Plot 3 graphs: primal variable error, function error, constraints error.
     """
     fig, ax = plt.subplots(1, 3, figsize=(16, 5))
 
-    ax[0].plot(x_err)
+    ax[0].plot(output['x_err'])
     ax[0].set_yscale('log')
     ax[0].set_xlabel("Iterarion number")
     ax[0].set_ylabel(r"$\| x^k - x^* \|_2^2$")
     ax[0].set_title("Primal variable error")
 
-    ax[1].plot(F_err)
+    ax[1].plot(output['F_err'])
     ax[1].set_yscale('log')
     ax[1].set_xlabel("Iterarion number")
     ax[1].set_ylabel(r"$|F(x^k) - F^*|$")
     ax[1].set_title("Function error")
 
-    ax[2].plot(cons_err)
+    ax[2].plot(output['cons_err'])
     ax[2].set_yscale('log')
     ax[2].set_xlabel("Iterarion number")
     ax[2].set_ylabel(r"$\| \sum\limits_{i=1}^{n} (A_i x_i^k - b_i) \|_2$")
@@ -159,31 +159,31 @@ def plot_logs(x_err, F_err, cons_err, title):
     plt.show()
     
     
-def plot_logs_pd(x_err, F_err, cons_err, primal_dual_err, title):
+def plot_logs_pd(output, title):
     """
     Plot 4 graphs: primal variable error, function error, constraints error, primal-dual error.
     """
     fig, ax = plt.subplots(2, 2, figsize=(11, 9))
 
-    ax[0][0].plot(x_err)
+    ax[0][0].plot(output['x_err'])
     ax[0][0].set_yscale('log')
     ax[0][0].set_xlabel("Iterarion number")
     ax[0][0].set_ylabel(r"$\| x^k - x^* \|_2^2$")
     ax[0][0].set_title("Primal variable error")
 
-    ax[0][1].plot(F_err)
+    ax[0][1].plot(output['F_err'])
     ax[0][1].set_yscale('log')
     ax[0][1].set_xlabel("Iterarion number")
     ax[0][1].set_ylabel(r"$|F(x^k) - F^*|$")
     ax[0][1].set_title("Function error")
 
-    ax[1][0].plot(cons_err)
+    ax[1][0].plot(output['cons_err'])
     ax[1][0].set_yscale('log')
     ax[1][0].set_xlabel("Iterarion number")
     ax[1][0].set_ylabel(r"$\| \sum\limits_{i=1}^{n} (A_i x_i^k - b_i) \|_2$")
     ax[1][0].set_title("Constraints error")
 
-    ax[1][1].plot(primal_dual_err)
+    ax[1][1].plot(output['primal_dual_err'])
     ax[1][1].set_yscale('log')
     ax[1][1].set_xlabel("Iterarion number")
     ax[1][1].set_ylabel(r"$\| \nabla_x G(x^k, y^k) - \mathbf{A}^\top z^k \|_2 $")
@@ -250,6 +250,73 @@ def plot_comparison_time(results):
     ax[2].set_ylabel(r"$\| \sum\limits_{i=1}^{n} (A_i x_i^k - b_i) \|_2$")
     ax[2].set_title("Constraints error")
 
+    plt.legend(bbox_to_anchor=(1, 0.5), loc="center left")
+    plt.suptitle('Comparison', fontsize=24)
+    plt.tight_layout()
+    plt.show()
+    
+    
+def plot_primal_oracles(output, title):
+    
+    fig, ax = plt.subplots(1, 3, figsize=(16, 5))
+
+    ax[0].plot(np.cumsum(output['grad_calls']), output['x_err'])
+    ax[0].set_yscale('log')
+    ax[0].set_xlabel("Gradient calls")
+    ax[0].set_ylabel(r"$\| x^k - x^* \|_2^2$")
+
+    ax[1].plot(np.cumsum(output['mults_A']), output['x_err'])
+    ax[1].set_yscale('log')
+    ax[1].set_xlabel("Multiplications by $\mathbf{A}$ and $\mathbf{A}^T$")
+    ax[1].set_ylabel(r"$\| x^k - x^* \|_2^2$")
+
+    ax[2].plot(np.cumsum(output['communications']), output['x_err'])
+    ax[2].set_yscale('log')
+    ax[2].set_xlabel("Communications")
+    ax[2].set_ylabel(r"$\| x^k - x^* \|_2^2$")
+
+    plt.suptitle(title, fontsize=24)
+    plt.tight_layout()
+    plt.show()
+    
+    
+def plot_comparison_oracles(results):
+    
+    fig, ax = plt.subplots(1, 3, figsize=(16, 5))
+
+    for title in results.keys():
+        output = results[title]
+        x_vals = np.cumsum(output['grad_calls'])
+        y_vals = output['x_err']
+        ax[0].plot(x_vals, y_vals, label=title)
+    #ax[0].set_xlim(left=0, right=np.cumsum(results['DPMM']['grad_calls'])[-1] * 0.1)
+    #ax[0].set_ylim(bottom=results['APAPC']['x_err'][-1], top=results['DPMM']['x_err'][0] * 10)
+    ax[0].set_yscale('log')
+    ax[0].set_xlabel("Gradient calls")
+    ax[0].set_ylabel(r"$\| x^k - x^* \|_2^2$")
+
+    for title in results.keys():
+        output = results[title]
+        x_vals = np.cumsum(output['mults_A'])
+        y_vals = output['x_err']
+        ax[1].plot(x_vals, y_vals, label=title)
+    #ax[1].set_xlim(left=0, right=np.cumsum(results['DPMM']['mults_A'])[-1] * 0.5)
+    #ax[1].set_ylim(bottom=results['APAPC']['x_err'][-1], top=results['DPMM']['x_err'][0] * 10)
+    ax[1].set_yscale('log')
+    ax[1].set_xlabel("Multiplications by $\mathbf{A}$ and $\mathbf{A}^T$")
+    ax[1].set_ylabel(r"$\| x^k - x^* \|_2^2$")
+
+    for title in results.keys():
+        output = results[title]
+        x_vals = np.cumsum(output['communications'])
+        y_vals = output['x_err']
+        ax[2].plot(x_vals, y_vals, label=title)
+    #ax[2].set_xlim(left=0, right=np.cumsum(results['DPMM']['communications'])[-1])
+    #ax[2].set_ylim(bottom=results['APAPC']['x_err'][-1], top=results['DPMM']['x_err'][0] * 10)
+    ax[2].set_yscale('log')
+    ax[2].set_xlabel("Communications")
+    ax[2].set_ylabel(r"$\| x^k - x^* \|_2^2$")
+    
     plt.legend(bbox_to_anchor=(1, 0.5), loc="center left")
     plt.suptitle('Comparison', fontsize=24)
     plt.tight_layout()

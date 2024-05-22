@@ -78,6 +78,10 @@ class Model:
         self._mu_W = None # strongly convexity constant W
         self._L_W = None # gradient Lipschitz constant W
         self._kappa_W = None # condition number W
+        
+        self._mu_B = None # strongly convexity constant B
+        self._L_B = None # gradient Lipschitz constant B
+        self._kappa_B = None # condition number B
     
         self._r = None # augmentation parameter
         self._gamma = None
@@ -143,6 +147,26 @@ class Model:
         if self._kappa_W is None:
             self._kappa_W = self.L_W / self.mu_W
         return self._kappa_W
+    
+    ### PARAMETERS OF B
+    
+    @property
+    def mu_B(self) -> float:
+        if self._mu_B is None:
+            self._mu_B = utils.get_s2min_plus(self.bB)
+        return self._mu_B
+  
+    @property
+    def L_B(self) -> float:
+        if self._L_B is None:
+            self._L_B = utils.get_s2max(self.bB)
+        return self._L_B
+    
+    @property
+    def kappa_B(self) -> float:
+        if self._kappa_B is None:
+            self._kappa_B = self.L_B / self.mu_B
+        return self._kappa_B
     
     ### AUGMENTATION PARAMETER (see Lemma 1)
     
@@ -330,6 +354,8 @@ class ExampleModel(Model):
 
         self.A_hstacked = np.hstack(self.A)
         self.b_sum = np.sum(self.b, axis=0)
+
+        self.bB = np.hstack((self.bA, self.gamma * self.bW))
 
         self.solution = self._get_solution()
 
@@ -581,6 +607,8 @@ class VFL(Model):
         #######
         self.A_hstacked = np.hstack(self.A)
         self.b_sum = np.sum(self.b, axis=0)
+        #######
+        self.bB = np.hstack((self.bA, self.gamma * self.bW))
     
     
     def _split_vector(self, x):
@@ -715,7 +743,6 @@ class VFL(Model):
         """
         z, w = self._split_vector(x)
         return 1 / 2 * np.linalg.norm(z - self.l)**2 + self.lmbd * np.linalg.norm(w)**2
-        #return 1 / 2 * np.linalg.norm(self.bF @ w - self.l)**2 + self.lmbd * np.linalg.norm(w)**2
         
     
     def grad_F(self, x):
