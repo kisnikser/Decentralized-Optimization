@@ -1,0 +1,6 @@
+numpy
+matplotlib
+cvxpy
+scipy
+scikit-learn
+typing-extensions
