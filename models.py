@@ -440,7 +440,7 @@ class VFL(Model):
                  num_nodes: int,
                  lmbd: float = 1e-3,
                  title: str = 'mushrooms',
-                 train_size: float = 0.7,
+                 sample_size: int = 1000,
                  graph: str = 'ring',
                  edge_prob: Optional[float] = None,
                  gossip: bool = False,
@@ -450,14 +450,14 @@ class VFL(Model):
             num_nodes: int - Number of nodes in the graph (n).
             lmnd: float = 1e-3 - Regularization parameter.
             title: str = 'mushrooms' - Title of the dataset
-            train_size: float = 0.7 - Train sample part
+            sample_size: int = 1000 - Number of objects in sample
             graph: str = 'ring' - Network graph model.
             edge_prob: Optional[float] = None - Probability threshold for Erdos-Renyi graph.
             gossip: bool = False - W will be gossip matrix defined by metropolis weights.
             labels_distribution: bool = False - Labels will be distributed between devices.
         """
         
-        feature_matrix, labels = self._get_dataset(title, train_size)
+        feature_matrix, labels = self._get_dataset(title, sample_size)
         
         num_features = feature_matrix.shape[1]
         num_cons = feature_matrix.shape[0]
@@ -505,7 +505,7 @@ class VFL(Model):
     
     def _get_dataset(self, 
                      title: str = 'mushrooms', 
-                     train_size: float = 0.7):
+                     sample_size: int = 1000):
         """
         Download the dataset `title`.
         Then split it into train and test.
@@ -513,7 +513,7 @@ class VFL(Model):
         
         Args:
             title: str = 'mushrooms' - Title of the dataset
-            train_size: float = 0.7 - Train sample part
+            sample_size: int = 1000 - Number of objects in sample
         Returns:
             feature_matrix: np.ndarray - Matrix objects-features from train part of the dataset
             labels: np.ndarray - Vector of labels from train part of the dataset
@@ -524,31 +524,32 @@ class VFL(Model):
             data = load_svmlight_file(dataset)
             X, y = data[0].toarray(), data[1]
             y = 2 * y - 3 # -1 and 1
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, train_size=train_size, random_state=42
-            )
+            indices = np.random.choice(np.arange(X.shape[0]), size=sample_size, replace=False)
+            X = X[indices]
+            y = y[indices]
+            
             
         elif title == 'a9a': # (32561, 123)
             dataset = 'data/a9a.txt'
             data = load_svmlight_file(dataset)
             X, y = data[0].toarray(), data[1]
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, train_size=train_size, random_state=42
-            )
+            indices = np.random.choice(np.arange(X.shape[0]), size=sample_size, replace=False)
+            X = X[indices]
+            y = y[indices]
         
         elif title == 'w8a': # (49749, 300)
             dataset = 'data/w8a.txt'
             data = load_svmlight_file(dataset)
             X, y = data[0].toarray(), data[1]
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, train_size=train_size, random_state=42
-            )
+            indices = np.random.choice(np.arange(X.shape[0]), size=sample_size, replace=False)
+            X = X[indices]
+            y = y[indices]
             
         elif title == 'synthetic':
             # synthetic linear regression dataset
             
-            n_features = 2 * 20
-            n_samples = 2 * 50
+            n_samples = sample_size
+            n_features = n_samples // 100
             
             mu_x = np.zeros(n_features)
             Sigma_x = np.identity(n_features)
@@ -561,13 +562,11 @@ class VFL(Model):
             eps = st.multivariate_normal(mean=np.zeros(n_samples), cov=sigma2*np.identity(n_samples)).rvs(size=1)
             y = X @ w + eps
             
-            X_train, y_train = X, y
-            
         else:
             raise NotImplementedError
        
-        feature_matrix = X_train
-        labels = y_train
+        feature_matrix = X
+        labels = y
      
         return feature_matrix, labels
     
