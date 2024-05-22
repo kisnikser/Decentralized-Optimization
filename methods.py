@@ -6,6 +6,7 @@ from typing import Dict, Optional
 import utils
 import time
 
+from tqdm import tqdm
 
 ###################################################################################################
 
@@ -62,7 +63,7 @@ def TrackingADMM(num_steps: int,
     mults_A = []
     communications = []
     
-    for i in range(num_steps):
+    for i in tqdm(range(num_steps)):
         # algorithm step
         x_prev = x
         x, next_grad_calls = get_argmin_TrackingADMM(x_prev, d, lmbd, c, model) # + 5 mult A, A^T, +2 communication
@@ -241,7 +242,7 @@ def DPMM(num_steps: int,
     mults_A = []
     communications = []
     
-    for i in range(num_steps):
+    for i in tqdm(range(num_steps)):
         # algorithm step
         x_hat, next_grad_calls = get_argmin_DPMM(x, y - Gamma @ Lambda, Gamma, Upsilon, model) # +3 mult A
         y_hat = y - Gamma @ Lambda + Gamma @ G_d(x_hat) # +1 mult A 
@@ -442,7 +443,7 @@ def APAPC(num_steps: int,
     mults_A = []
     communications = []
     
-    for i in range(num_steps):
+    for i in tqdm(range(num_steps)):
         u_g = tau * u + (1 - tau) * u_f 
         g = model.grad_G(u_g[:model.dim], u_g[model.dim:]) # +1 grad call, +2 mult A, A^T, +2 communication
         u_half = 1 / (1 + eta * alpha) * (u - eta * (g - alpha * u_g + z)) # +1 mult A^T, +1 communication
@@ -680,7 +681,7 @@ def Main(num_steps: int,
     mults_A = []
     communications = []
     
-    for i in range(num_steps):
+    for i in tqdm(range(num_steps)):
         u_g = tau * u + (1 - tau) * u_f 
         g = grad_G(u_g, model) # +1 grad call, +2 mult A, A^T, +2n(W) communications
         u_half = 1 / (1 + eta * alpha) * (u - eta * (g - alpha * u_g + z))
