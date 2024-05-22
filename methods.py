@@ -565,13 +565,22 @@ def K_Chebyshev(u, model):
     
     x, y = u[:model.dim], u[model.dim:]
     
-    n = np.ceil(np.sqrt(model.kappa_B)).astype(int)
-    rho = (model.L_B - model.mu_B)**2 / 16
-    nu = (model.L_B + model.mu_B) / 2
+    mu_W_prime = (11 / 15) ** 2
+    L_W_prime = (19 / 15) ** 2
+    
+    mu_B = model.mu_A / 2
+    L_B = model.L_A + (model.L_A + model.mu_A) * L_W_prime / mu_W_prime
+    kappa_B = L_B / mu_B
+    gamma = np.sqrt((model.mu_A + model.L_A) / mu_W_prime)
+    
+    n = np.ceil(np.sqrt(kappa_B)).astype(int)
+    
+    rho = (L_B - mu_B)**2 / 16
+    nu = (L_B + mu_B) / 2
     
     delta = - nu / 2
-    q = model.bA @ x + model.gamma * mulW_prime(y, model) - model.bb # +1 mult A, +n(W) communications
-    p = - 1 / nu * np.hstack((model.bA.T @ q, model.gamma * mulW_prime(q, model))) # +1 mult A^T, +n(W) communications
+    q = model.bA @ x + gamma * mulW_prime(y, model) - model.bb # +1 mult A, +n(W) communications
+    p = - 1 / nu * np.hstack((model.bA.T @ q, gamma * mulW_prime(q, model))) # +1 mult A^T, +n(W) communications
     u_0 = u.copy()
     u = u_0 + p
     
@@ -579,8 +588,8 @@ def K_Chebyshev(u, model):
         beta = rho / delta
         delta = - (nu + beta)
         x, y = u[:model.dim], u[model.dim:]
-        q = model.bA @ x + model.gamma * mulW_prime(y, model) - model.bb # +1 mult A, +n(W) communications
-        p = 1 / delta * np.hstack((model.bA.T @ q, model.gamma * mulW_prime(q, model))) + beta * p / delta # +1 mult A^T, +n(W) communications
+        q = model.bA @ x + gamma * mulW_prime(y, model) - model.bb # +1 mult A, +n(W) communications
+        p = 1 / delta * np.hstack((model.bA.T @ q, gamma * mulW_prime(q, model))) + beta * p / delta # +1 mult A^T, +n(W) communications
         u = u + p
         
     return u_0 - u
@@ -597,11 +606,14 @@ def grad_G(u, model):
         Returns:
             Augmented function gradient at point (x, y).
         """
+        mu_W_prime = (11 / 15) ** 2
+        gamma = np.sqrt((model.mu_A + model.L_A) / mu_W_prime)
+        
         x, y = u[:model.dim], u[model.dim:]
-        z = model.r * (model.bA @ x + model.gamma * mulW_prime(y, model) - model.bb) # +1 mult A, +n(W) communications
+        z = model.r * (model.bA @ x + gamma * mulW_prime(y, model) - model.bb) # +1 mult A, +n(W) communications
         return np.hstack((
             model.grad_F(x) + model.bA.T @ z,  # +1 grad call, +1 mult A^T
-            model.gamma * mulW_prime(z, model) # +n communications
+            gamma * mulW_prime(z, model) # +n communications
         ))
 
 ###################################################################################################
@@ -625,14 +637,26 @@ def Main(num_steps: int,
     L_K = 19 / 15
     kappa_K = L_K / mu_K
     
+    mu_W_prime = (11 / 15) ** 2
+    L_W_prime = (19 / 15) ** 2
+    kappa_W_prime = L_W_prime / mu_W_prime
+    
+    mu_G = model.mu_f * min(1 / 2, (model.mu_A + model.L_A) / (4 * model.L_A))
+    L_G = max(model.L_f + model.mu_f, model.mu_f * (model.mu_A + model.L_A) / model.L_A * L_W_prime / mu_W_prime)
+    kappa_G = L_G / mu_G
+    
+    mu_B = model.mu_A / 2
+    L_B = model.L_A + (model.L_A + model.mu_A) * L_W_prime / mu_W_prime
+    kappa_B = L_B / mu_B
+    
     # set algorithm parameters
     params = {} if params is None else params
-    tau = params.get('tau', min(1, 1/2 * np.sqrt(kappa_K/model.kappa_G)))
+    tau = params.get('tau', min(1, 1/2 * np.sqrt(kappa_K/kappa_G)))
     assert tau >= 0, "The parameter tau must be greater than 0"
     assert tau <= 1, "The parameter tau must be less than 1"
-    eta = params.get('eta', 1 / (4*tau*model.L_G))
+    eta = params.get('eta', 1 / (4*tau*L_G))
     theta = params.get('theta', 1 / (eta*L_K))
-    alpha = params.get('alpha', model.mu_G)
+    alpha = params.get('alpha', mu_G)
     assert alpha > 0, "The parameter alpha must be greater than 0"
 
     # set the initial point
@@ -671,9 +695,9 @@ def Main(num_steps: int,
         
         # oracles
         grad_calls.append(1)
-        mults_A.append(2 + 2 * np.ceil(np.sqrt(model.kappa_B)).astype(int))
+        mults_A.append(2 + 2 * np.ceil(np.sqrt(kappa_B)).astype(int))
         communications.append(
-            2 * np.ceil(np.sqrt(model.kappa_W)).astype(int) * (np.ceil(np.sqrt(model.kappa_B)).astype(int) + 1)
+            2 * np.ceil(np.sqrt(kappa_W_prime)).astype(int) * (np.ceil(np.sqrt(kappa_B)).astype(int) + 1)
         )
         
         # add values to the logs

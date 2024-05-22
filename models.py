@@ -204,7 +204,7 @@ class Model:
         """
         if self._L_G is None:
             self._L_G = max(self.L_f + self.mu_f,
-                            (self.mu_A + self.L_A) / self.L_A * self.L_W / self.mu_W)
+                            self.mu_f * (self.mu_A + self.L_A) / self.L_A * self.L_W / self.mu_W)
         return self._L_G
     
     @property
