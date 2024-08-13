@@ -4,6 +4,9 @@ import scipy as sp
 import scipy.stats as st
 from typing import List, Optional
 import utils
+import time
+
+from utils import Timer
 
 # for dataset downloading
 from sklearn.datasets import load_svmlight_file
@@ -34,18 +37,21 @@ class Model:
             gossip: bool = False - W will be gossip matrix defined by metropolis weights.
         """
         
+        self.model_type = None
+        
         self.n = num_nodes # n
         self.m = num_cons # m
         self.d = d # d
         self.dim = self.n * self.d # d + ... + d = nd
     
         # get Laplacian matrix of the network graph
-        if graph == 'ring':
-            self.W = utils.get_ring_W(self.n)
-        elif graph == 'erdos-renyi':
-            self.W = utils.get_ER_W(self.n, edge_prob)
-        else:
-            raise NotImplementedError
+        with Timer('W'):
+            if graph == 'ring':
+                self.W = utils.get_ring_W(self.n)
+            elif graph == 'erdos-renyi':
+                self.W = utils.get_ER_W(self.n, edge_prob)
+            else:
+                raise NotImplementedError
         
         # graph adjacency matrix
         self.adjacency_matrix = np.identity(self.n) * np.diag(self.W) - self.W
@@ -61,7 +67,9 @@ class Model:
             self.W = self.gossip_matrix
         
         Im = np.identity(self.m) # identity matrix of shape m
-        self.bW = np.kron(self.W, Im) # bW = W x Im
+        #print('bW shape:', self.W.shape[0] * Im.shape[0], self.W.shape[1] * Im.shape[1])
+        #with Timer('bW'):
+        #    self.bW = np.kron(self.W, Im) # bW = W x Im
         
         self._mu_f = None # strongly convexity constant for the function
         self._L_f = None # gradient Lipschitz constant for the function
@@ -91,19 +99,22 @@ class Model:
     @property
     def mu_f(self) -> float:
         if self._mu_f is None:
-            self._mu_f = utils.lambda_min(self.hess_F())
+            with Timer('mu_f'):
+                self._mu_f = utils.lambda_min(self.hess_F())
         return self._mu_f
   
     @property
     def L_f(self) -> float:
         if self._L_f is None:
-            self._L_f = utils.lambda_max(self.hess_F())
+            with Timer('L_f'):
+                self._L_f = utils.lambda_max(self.hess_F())
         return self._L_f
     
     @property
     def kappa_f(self) -> float:
         if self._kappa_f is None:
-            self._kappa_f = self.L_f / self.mu_f
+            with Timer('kappa_f'):
+                self._kappa_f = self.L_f / self.mu_f
         return self._kappa_f
     
     ### PARAMETERS OF A
@@ -111,21 +122,24 @@ class Model:
     @property
     def mu_A(self) -> float:
         if self._mu_A is None:
-            bS = sum([Ai @ Ai.T for Ai in self.A]) / self.n
-            self._mu_A = utils.lambda_min_plus(bS)
+            with Timer('mu_A'):
+                bS = sum([Ai @ Ai.T for Ai in self.A]) / self.n
+                self._mu_A = utils.lambda_min_plus(bS)
         return self._mu_A
   
     @property
     def L_A(self) -> float:
         if self._L_A is None:
-            A_norms = [utils.get_s2max(Ai) for Ai in self.A]
-            self._L_A = max(A_norms)
+            with Timer('L_A'):
+                A_norms = [utils.get_s2max(Ai) for Ai in self.A]
+                self._L_A = max(A_norms)
         return self._L_A
     
     @property
     def kappa_A(self) -> float:
         if self._kappa_A is None:
-            self._kappa_A = self.L_A / self.mu_A
+            with Timer('kappa_A'):
+                self._kappa_A = self.L_A / self.mu_A
         return self._kappa_A
     
     ### PARAMETERS OF W
@@ -133,19 +147,22 @@ class Model:
     @property
     def mu_W(self) -> float:
         if self._mu_W is None:
-            self._mu_W = utils.lambda_min_plus(self.W) ** 2
+            with Timer('mu_W'):
+                self._mu_W = utils.lambda_min_plus(self.W) ** 2
         return self._mu_W
   
     @property
     def L_W(self) -> float:
         if self._L_W is None:
-            self._L_W = utils.lambda_max(self.W) ** 2
+            with Timer('L_W'):
+                self._L_W = utils.lambda_max(self.W) ** 2
         return self._L_W
     
     @property
     def kappa_W(self) -> float:
         if self._kappa_W is None:
-            self._kappa_W = self.L_W / self.mu_W
+            with Timer('kappa_W'):
+                self._kappa_W = self.L_W / self.mu_W
         return self._kappa_W
     
     ### PARAMETERS OF B
@@ -153,19 +170,22 @@ class Model:
     @property
     def mu_B(self) -> float:
         if self._mu_B is None:
-            self._mu_B = utils.get_s2min_plus(self.bB)
+            with Timer('mu_B'):
+                self._mu_B = utils.get_s2min_plus(self.bB)
         return self._mu_B
   
     @property
     def L_B(self) -> float:
         if self._L_B is None:
-            self._L_B = utils.get_s2max(self.bB)
+            with Timer('L_B'):
+                self._L_B = utils.get_s2max(self.bB)
         return self._L_B
     
     @property
     def kappa_B(self) -> float:
         if self._kappa_B is None:
-            self._kappa_B = self.L_B / self.mu_B
+            with Timer('kappa_B'):
+                self._kappa_B = self.L_B / self.mu_B
         return self._kappa_B
     
     ### AUGMENTATION PARAMETER (see Lemma 1)
@@ -331,6 +351,7 @@ class ExampleModel(Model):
             gossip: bool = False - W will be gossip matrix defined by metropolis weights.
         """
         super().__init__(num_nodes, num_cons, d, graph, edge_prob, gossip)   
+        self.model_type = 'ExampleModel'
         
         self.dimensions = [self.d for _ in range(self.n)]
         
@@ -355,7 +376,7 @@ class ExampleModel(Model):
         self.A_hstacked = np.hstack(self.A)
         self.b_sum = np.sum(self.b, axis=0)
 
-        self.bB = np.hstack((self.bA, self.gamma * self.bW))
+        #self.bB = np.hstack((self.bA, self.gamma * self.bW))
 
         self.solution = self._get_solution()
 
@@ -466,7 +487,8 @@ class VFL(Model):
         
         d = num_features // num_nodes      
         
-        super().__init__(num_nodes, num_cons, d, graph, edge_prob, gossip)   
+        super().__init__(num_nodes, num_cons, d, graph, edge_prob, gossip)  
+        self.model_type = 'VFL' 
         
         self.dim = self.n * self.d + self.m     
         
@@ -483,7 +505,8 @@ class VFL(Model):
             self.num_samples = self.split_number(self.m, self.n)
             self.dimensions = [self.d + self.num_samples[i] for i in range(self.n)]
         
-        self._get_constraints() # -> self.A, self.b, self.bA, self.bb
+        with Timer('_get_constraints'):
+            self._get_constraints() # -> self.A, self.b, self.bA, self.bb
         
         self.solution = self._get_solution()
         
@@ -607,7 +630,7 @@ class VFL(Model):
         self.A_hstacked = np.hstack(self.A)
         self.b_sum = np.sum(self.b, axis=0)
         #######
-        self.bB = np.hstack((self.bA, self.gamma * self.bW))
+        #self.bB = np.hstack((self.bA, self.gamma * self.bW))
     
     
     def _split_vector(self, x):

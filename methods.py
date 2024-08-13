@@ -6,6 +6,8 @@ from typing import Dict, Optional
 import utils
 import time
 
+from utils import Timer
+
 from tqdm import tqdm
 
 ###################################################################################################
@@ -26,15 +28,15 @@ def TrackingADMM(num_steps: int,
         output: Dict[...] - Dictionary with the method results
     """
     
-    if isinstance(model, ExampleModel):
+    if model.model_type == 'ExampleModel':
         get_argmin_TrackingADMM = get_argmin_TrackingADMM_example
-    elif isinstance(model, VFL):
+    elif model.model_type == 'VFL':
         get_argmin_TrackingADMM = get_argmin_TrackingADMM_vfl
     else:
         raise NotImplementedError
     
     # set variables to the paper notation
-    W = np.kron(model.mixing_matrix, np.identity(model.m))
+    #W = np.kron(model.mixing_matrix, np.identity(model.m))
     A_d = model.bA
     
     # set algorithm parameters
@@ -63,12 +65,19 @@ def TrackingADMM(num_steps: int,
     mults_A = []
     communications = []
     
+    if model.model_type == 'ExampleModel':
+        A = model.bCT_bC + model.theta * np.identity(model.dim) + c * A_d.T @ A_d # +2 mult A, A^T
+    elif model.model_type == 'VFL':
+        A = model.hess_F() + c * A_d.T @ A_d # +2 mult A, A^T
+    #mults_A.append(2)
+    
     for i in tqdm(range(num_steps)):
         # algorithm step
         x_prev = x
-        x, next_grad_calls = get_argmin_TrackingADMM(x_prev, d, lmbd, c, model) # + 5 mult A, A^T, +2 communication
-        d = W @ d + A_d @ (x - x_prev) # +1 communication, +1 mult A
-        lmbd = W @ lmbd + c * d # +1 communication
+        #with Timer('get_argmin_TrackingADMM'):
+        x, next_grad_calls = get_argmin_TrackingADMM(x_prev, d, lmbd, c, model, A) # + 3 mult A, A^T, +2 communication
+        d = (model.W @ d.reshape((model.n, model.m))).flatten() + A_d @ (x - x_prev) # +1 communication, +1 mult A
+        lmbd = (model.W @ lmbd.reshape((model.n, model.m))).flatten() + c * d # +1 communication
        
         # time 
         end = time.time()
@@ -76,7 +85,7 @@ def TrackingADMM(num_steps: int,
         
         # oracles
         grad_calls.append(next_grad_calls)
-        mults_A.append(6)
+        mults_A.append(4)
         communications.append(4)
         
         # add values to the logs
@@ -104,7 +113,8 @@ def get_argmin_TrackingADMM_example(x_k: np.ndarray,
                                     d_k: np.ndarray,
                                     lmbd_k: np.ndarray,
                                     c: float,
-                                    model: ExampleModel):
+                                    model: ExampleModel,
+                                    A: np.ndarray):
     """
     Solve argmin subproblem in Tracking-ADMM for our Example problem.
     
@@ -119,15 +129,13 @@ def get_argmin_TrackingADMM_example(x_k: np.ndarray,
         grad_calls: int - Number of gradient calls during the algorithm
     """
     # set variables to the paper notation
-    W = np.kron(model.mixing_matrix, np.identity(model.m))
+    #W = np.kron(model.mixing_matrix, np.identity(model.m))
     A_d = model.bA
-        
-    A = model.bCT_bC + model.theta * np.identity(model.dim) + c * A_d.T @ A_d # +2 mult A, A^T
     
     b = (
         model.bCT_bd
-        - A_d.T @ W @ lmbd_k # +1 mult A^T, +1 communication
-        + c * A_d.T @ (A_d @ x_k - W @ d_k) # +2 mult A, A^T, +1 communication
+        - A_d.T @ (model.W @ lmbd_k.reshape((model.n, model.m))).flatten() # +1 mult A^T, +1 communication
+        + c * A_d.T @ (A_d @ x_k - (model.W @ d_k.reshape((model.n, model.m))).flatten()) # +2 mult A, A^T, +1 communication
     )
     
     x, grad_calls = ConjugateGradientQuadratic(x_k, A, b)
@@ -142,7 +150,7 @@ def get_argmin_TrackingADMM_vfl(x_k: np.ndarray,
                                 lmbd_k: np.ndarray,
                                 c: float,
                                 model: VFL,
-                                mode: str = 'newton'):
+                                A: np.ndarray):
     """
     Solve argmin subproblem in Tracking-ADMM for our VFL problem.
     
@@ -158,15 +166,13 @@ def get_argmin_TrackingADMM_vfl(x_k: np.ndarray,
         grad_calls: int - Number of gradient calls during the algorithm
     """
     # set variables to the paper notation
-    W = np.kron(model.mixing_matrix, np.identity(model.m))
+    #W = np.kron(model.mixing_matrix, np.identity(model.m))
     A_d = model.bA
-    
-    A = model.hess_F() + c * A_d.T @ A_d # +2 mult A, A^T
     
     b = (
         model._rearrange_vector(np.hstack((model.l, np.zeros(model.n * model.d))))
-        - A_d.T @ W @ lmbd_k # +1 mult A^T, +1 communication
-        + c * A_d.T @ (A_d @ x_k - W @ d_k) # +2 mult A, A^T, +1 communication
+        - A_d.T @ (model.W @ lmbd_k.reshape((model.n, model.m))).flatten() # +1 mult A^T, +1 communication
+        + c * A_d.T @ (A_d @ x_k - (model.W @ d_k.reshape((model.n, model.m))).flatten()) # +2 mult A, A^T, +1 communication
     )
     
     x, grad_calls = ConjugateGradientQuadratic(x_k, A, b)
@@ -192,16 +198,16 @@ def DPMM(num_steps: int,
         output: Dict[...] - Dictionary with the method results
     """
     
-    if isinstance(model, ExampleModel):
+    if model.model_type == 'ExampleModel':
         get_argmin_DPMM = get_argmin_DPMM_example
-    elif isinstance(model, VFL):
+    elif model.model_type == 'VFL':
         get_argmin_DPMM = get_argmin_DPMM_vfl
     else:
         raise NotImplementedError
     
     # set variables to the paper notation
     I_n = np.identity(model.dim)
-    bL = model.bW
+    #bL = model.bW
     G_d = lambda x: model.bA @ x - model.bb
     
     # set algorithm parameters
@@ -219,8 +225,11 @@ def DPMM(num_steps: int,
     assert np.all(gamma > 0), "Parameter gamma must be greater than 0"
     Gamma = sp.linalg.block_diag(*[gamma[i] * np.identity(model.m) for i in range(model.n)])
     
-    beta = params.get('beta', min(1 / (gamma * utils.lambda_max(bL))) / 2)
-    assert beta > 0 and beta < min(1 / (gamma * utils.lambda_max(bL))), "Wrong parameter beta"
+    beta = params.get('beta', min(1 / (gamma * utils.lambda_max(model.W))) / 2)
+    assert beta > 0 and beta < min(1 / (gamma * utils.lambda_max(model.W))), "Wrong parameter beta"
+    
+    #beta = params.get('beta', min(1 / (gamma * utils.lambda_max(bL))) / 2)
+    #assert beta > 0 and beta < min(1 / (gamma * utils.lambda_max(bL))), "Wrong parameter beta"
     
     # set the initial point
     x = np.zeros(model.dim)
@@ -242,13 +251,24 @@ def DPMM(num_steps: int,
     mults_A = []
     communications = []
     
+    A = (
+        model.hess_F()
+        + model.bA.T @ Gamma @ model.bA # + 2 mult A, A^T
+        + np.linalg.inv(Upsilon)
+    )
+    #mults_A.append(2)
+    
     for i in tqdm(range(num_steps)):
         # algorithm step
-        x_hat, next_grad_calls = get_argmin_DPMM(x, y - Gamma @ Lambda, Gamma, Upsilon, model) # +3 mult A
+        #with Timer('get_argmin_DPMM'):
+        x_hat, next_grad_calls = get_argmin_DPMM(x, y - Gamma @ Lambda, Gamma, Upsilon, model, A) # +1 mult A
         y_hat = y - Gamma @ Lambda + Gamma @ G_d(x_hat) # +1 mult A 
         x = (I_n - Theta) @ x + Theta @ x_hat
         Lambda_prev = Lambda
-        Lambda = Lambda_prev + beta * bL @ y_hat # +1 communication
+        #Lambda = Lambda_prev + beta * bL @ y_hat # +1 communication
+        #bL @ y_hat заменяется на:
+        bL_times_yhat = (model.W @ y_hat.reshape((model.n, model.m))).flatten()
+        Lambda = Lambda_prev + beta * bL_times_yhat # +1 communication
         y = y_hat + Gamma @ (Lambda_prev - Lambda)
         
         # time
@@ -257,7 +277,7 @@ def DPMM(num_steps: int,
         
         # oracles
         grad_calls.append(next_grad_calls)
-        mults_A.append(4)
+        mults_A.append(2)
         communications.append(1)
         
         # add values to the logs
@@ -285,7 +305,8 @@ def get_argmin_DPMM_example(x_k: np.ndarray,
                             y: np.ndarray,
                             Gamma: np.ndarray,
                             Upsilon: np.ndarray,
-                            model: ExampleModel):
+                            model: ExampleModel,
+                            A: np.ndarray):
     """
     Solve argmin subproblem in DPMM for our Example problem.
     
@@ -300,18 +321,13 @@ def get_argmin_DPMM_example(x_k: np.ndarray,
         grad_calls: int - Number of gradient calls during the algorithm
     """
     
-    A = (
-        model.hess_F()
-        + model.bA.T @ Gamma @ model.bA # + 2 mult A, A^T
-        + np.linalg.inv(Upsilon)
-    )
-    
     b = (
         model.bCT_bd
         + model.bA.T @ (Gamma @ model.bb - y) # + 1 mult A^T
         + np.linalg.inv(Upsilon) @ x_k
     )
     
+    #with Timer('ConjugateGradientQuadratic'):
     x, grad_calls = ConjugateGradientQuadratic(x_k, A, b)
     
     return x, grad_calls
@@ -323,7 +339,8 @@ def get_argmin_DPMM_vfl(x_k: np.ndarray,
                         y: np.ndarray,
                         Gamma: np.ndarray,
                         Upsilon: np.ndarray,
-                        model: VFL):
+                        model: VFL,
+                        A: np.ndarray):
     """
     Solve argmin subproblem in DPMM for our VFL problem.
     
@@ -338,18 +355,13 @@ def get_argmin_DPMM_vfl(x_k: np.ndarray,
         grad_calls: int - Number of gradient calls during the algorithm
     """
     
-    A = (
-        model.hess_F()
-        + model.bA.T @ Gamma @ model.bA # + 2 mult A, A^T
-        + np.linalg.inv(Upsilon)
-    )
-    
     b = (
         model._rearrange_vector(np.hstack((model.l, np.zeros(model.n * model.d))))
         + model.bA.T @ (Gamma @ model.bb - y) # + 1 mult A^T
         + np.linalg.inv(Upsilon) @ x_k
     )
     
+    #with Timer('ConjugateGradientQuadratic'):
     x, grad_calls = ConjugateGradientQuadratic(x_k, A, b)
     
     return x, grad_calls
@@ -538,14 +550,15 @@ def mulW_prime(y, model):
     nu = (np.sqrt(model.L_W) + np.sqrt(model.mu_W)) / 2
     
     delta = - nu / 2
-    p = - model.bW @ y / nu
+    #p = - model.bW @ y / nu
+    p = - (model.W @ y.reshape((model.n, model.m))).flatten() / nu
     y_0 = y.copy()
     y = y + p
         
     for _ in range(1, n):
         beta = rho / delta
         delta = - (nu + beta)
-        p = (model.bW @ y + beta * p) / delta
+        p = ((model.W @ y.reshape((model.n, model.m))).flatten() + beta * p) / delta
         y = y + p
             
     return y_0 - y
@@ -685,6 +698,7 @@ def Main(num_steps: int,
         u_g = tau * u + (1 - tau) * u_f 
         g = grad_G(u_g, model) # +1 grad call, +2 mult A, A^T, +2n(W) communications
         u_half = 1 / (1 + eta * alpha) * (u - eta * (g - alpha * u_g + z))
+        #with Timer('K_Chebyshev'):
         z = z + theta * K_Chebyshev(u_half, model) # +2n(B) mult A, A^T, +2n(W)n(B) communications
         u_prev = u
         u = 1 / (1 + eta * alpha) * (u - eta * (g - alpha * u_g + z))
