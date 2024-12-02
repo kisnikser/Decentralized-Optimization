@@ -59,12 +59,9 @@ class Model:
         # mixing matrix = metropolis weights matrix
         self.mixing_matrix = utils.get_metropolis_weights(self.adjacency_matrix)
         
-        # gossip matrix = I - mixing matrix
-        self.gossip_matrix = np.identity(self.n) - self.mixing_matrix
-        
         # we can choose W to be gossip matrix
         if gossip:
-            self.W = self.gossip_matrix
+            self.mixing_matrix = np.identity(self.n) - self.W / utils.lambda_max(self.W)
         
         Im = np.identity(self.m) # identity matrix of shape m
         #print('bW shape:', self.W.shape[0] * Im.shape[0], self.W.shape[1] * Im.shape[1])
@@ -100,14 +97,20 @@ class Model:
     def mu_f(self) -> float:
         if self._mu_f is None:
             with Timer('mu_f'):
-                self._mu_f = utils.lambda_min(self.hess_F())
+                if self.model_type == 'ConsensusLogisticModel':
+                    return self.theta
+                else:
+                    self._mu_f = utils.lambda_min(self.hess_F())
         return self._mu_f
   
     @property
     def L_f(self) -> float:
         if self._L_f is None:
             with Timer('L_f'):
-                self._L_f = utils.lambda_max(self.hess_F())
+                if self.model_type == 'ConsensusLogisticModel':
+                    return self.theta + 1 / (4 * self.X.shape[0]) * np.sum([np.linalg.norm(x) ** 2 for x in self.X])
+                else:
+                    self._L_f = utils.lambda_max(self.hess_F())
         return self._L_f
     
     @property
@@ -821,3 +824,254 @@ class VFL(Model):
     
     
 ###################################################################################################
+
+    
+class ConsensusModel(Model):
+    """
+    Consensus optimization model.
+    """
+    def __init__(self, 
+                 num_nodes: int,
+                 d: int,
+                 graph: str = 'ring',
+                 edge_prob: Optional[float] = None,
+                 gossip: bool = False,
+                 condition_number: Optional[float] = None) -> None:
+        """
+        Args:
+            num_nodes: int - Number of nodes in the graph (n).
+            d: int - Dimension of the local variables (d).
+            graph: str = 'ring' - Network graph model.
+            edge_prob: Optional[float] = None - Probability threshold for Erdos-Renyi graph.
+            gossip: bool = False - W will be gossip matrix defined by metropolis weights.
+        """
+        num_cons = num_nodes * d
+        super().__init__(num_nodes, num_cons, d, graph, edge_prob, gossip)   
+        self.model_type = 'ConsensusModel'
+        
+        self.dimensions = [self.d for _ in range(self.n)]
+        
+        # set parameters for function
+        self.theta = 1e-3 # regularization parameter
+        if condition_number is not None:
+            self.C = utils.generate_matrices_for_condition_number(
+                n=num_nodes, 
+                d=d, 
+                condition_number=condition_number, 
+                theta=self.theta
+            )
+        else:
+            self.C = [np.random.rand(self.d, self.d) for _ in range(self.n)] # C_1, ..., C_n
+        self.d_ = [np.random.rand(self.d) for _ in range(self.n)] # d_1, ..., d_n
+        
+        self.bC = sp.linalg.block_diag(*self.C) # bC = diag(C_1, ... C_n)
+        self.bd = np.hstack(self.d_) # bd = col(d_1, ..., d_n)
+        
+        self._bCT_bC = None # used in grad_F and hess_F
+        self._bCT_bd = None # used in grad_F
+        
+        # set parameters for constraints
+        gossip_matrix = np.kron(self.W, np.identity(self.d))
+        self.A = [gossip_matrix[:, i*d:(i+1)*d] for i in range(self.n)] # A_1, ..., A_n
+        self.b = [np.zeros(self.m) for _ in range(self.n)] # b_1, ..., b_n
+
+        self.bA = sp.linalg.block_diag(*self.A) # bA = diag(A_1, ..., A_n)
+        self.bb = np.hstack(self.b) # bb = col(b_1, ..., b_n)       
+
+        self.A_hstacked = np.hstack(self.A)
+        self.b_sum = np.sum(self.b, axis=0)
+
+        #self.bB = np.hstack((self.bA, self.gamma * self.bW))
+
+        self.solution = self._get_solution()
+
+
+    @property
+    def bCT_bC(self) -> np.ndarray:
+        if self._bCT_bC is None:
+            self._bCT_bC = self.bC.T @ self.bC
+        return self._bCT_bC
+    
+
+    @property
+    def bCT_bd(self) -> np.ndarray:
+        if self._bCT_bd is None:
+            self._bCT_bd = self.bC.T @ self.bd
+        return self._bCT_bd
+    
+    
+    def F(self, x):
+        """
+        Args:
+            x: np.ndarray - Vector of primal variables.
+        Returns:
+            Function value at point x.
+        """
+        a = self.bC @ x - self.bd
+        return 1/2 * (a.T @ a + self.theta * x.T @ x)
+    
+    
+    def grad_F(self, x):
+        """
+        Args:
+            x: np.ndarray - Vector of primal variables.
+        Returns:
+            Function gradient at point x.
+        """
+        return self.bCT_bC @ x - self.bCT_bd + self.theta * x
+    
+    
+    def hess_F(self, x: Optional[np.ndarray] = None):
+        """
+        Args:
+            x: Optional[np.ndarray] = None - Vector of primal variables.
+        Returns:
+            Function hessian at point x.
+        """
+        return self.bCT_bC + self.theta * np.identity(self.dim)
+    
+    
+    def _get_solution(self):
+        """
+        Returns:
+            x_star: Solution.
+            F_star: Function value at solution.
+        """
+        x = cp.Variable(self.dim)
+        
+        objective = cp.Minimize(
+            1/2 * cp.sum_squares(self.bC @ x - self.bd) 
+            + self.theta/2 * cp.sum_squares(x)
+        )
+        
+        constraints = [self.A_hstacked @ x - self.b_sum == 0]
+        
+        prob = cp.Problem(objective, constraints)
+        prob.solve()
+        
+        x_star = x.value
+        F_star = prob.value
+        
+        return x_star, F_star
+    
+
+###############################################################################
+
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+def prob_y(x, w):
+    return sigmoid(x @ w)
+
+def sample_y(X, w):
+    y_zeros = st.bernoulli.rvs(p=prob_y(X, w))
+    y_zeros[y_zeros == 0] = -1
+    y = y_zeros
+    return y
+
+def f(w, X, y, lmbd):
+    return -np.mean(np.log(sigmoid(y * (X @ w)))) + 0.5 * lmbd * np.linalg.norm(w) ** 2
+
+def nabla_f(w, X, y, lmbd):
+    return (
+        -np.mean((X * y[:, None]) * sigmoid(-y * (X @ w))[:, None], axis=0) + lmbd * w
+    )
+
+def hess_f(w, X, y, lmbd):
+    R = np.diag(sigmoid(X @ w) * sigmoid(-X @ w))
+    return 1 / X.shape[0] * X.T @ R @ X + lmbd * np.identity(X.shape[1])
+
+class ConsensusLogisticModel(Model):
+    """
+    Consensus optimization model for logistic regression.
+    """
+    def __init__(self,
+                 num_nodes: int,
+                 d: int,
+                 graph: str = 'ring',
+                 edge_prob: Optional[float] = None,
+                 gossip: bool = False,
+                 condition_number: Optional[float] = None) -> None:
+        """
+        Args:
+            num_nodes: int - Number of nodes in the graph (n).
+            d: int - Dimension of the local variables (d).
+            graph: str = 'ring' - Network graph model.
+            edge_prob: Optional[float] = None - Probability threshold for Erdos-Renyi graph.
+            gossip: bool = False - W will be gossip matrix defined by metropolis weights.
+            condition_number: Optional[float] = None - Desired condition number.
+        """
+        num_cons = num_nodes * d
+        super().__init__(num_nodes, num_cons, d, graph, edge_prob, gossip)
+        self.model_type = 'ConsensusLogisticModel'
+
+        self.dimensions = [self.d for _ in range(self.n)]
+
+        # set parameters for function
+        self.theta = 1e-3  # regularization parameter
+
+        # Generate random labels and feature vectors
+        self.X = np.random.randn(num_nodes, self.dim)
+        self.y = sample_y(self.X, np.random.randn(self.dim))
+
+        # set parameters for constraints
+        gossip_matrix = np.kron(self.W, np.identity(self.d))
+        self.A = [gossip_matrix[:, i*d:(i+1)*d] for i in range(self.n)]  # A_1, ..., A_n
+        self.b = [np.zeros(self.m) for _ in range(self.n)]  # b_1, ..., b_n
+
+        self.bA = sp.linalg.block_diag(*self.A)  # bA = diag(A_1, ..., A_n)
+        self.bb = np.hstack(self.b)  # bb = col(b_1, ..., b_n)
+
+        self.A_hstacked = np.hstack(self.A)
+        self.b_sum = np.sum(self.b, axis=0)
+
+        self.solution = self._get_solution()
+
+    def F(self, x):
+        """
+        Args:
+            x: np.ndarray - Vector of primal variables.
+        Returns:
+            Function value at point x.
+        """
+        return f(x, self.X, self.y, self.theta)
+
+    def grad_F(self, x):
+        """
+        Args:
+            x: np.ndarray - Vector of primal variables.
+        Returns:
+            Function gradient at point x.
+        """
+        return nabla_f(x, self.X, self.y, self.theta)
+
+    def hess_F(self, x: Optional[np.ndarray] = None):
+        """
+        Args:
+            x: Optional[np.ndarray] = None - Vector of primal variables.
+        Returns:
+            Function hessian at point x.
+        """
+        return hess_f(x, self.X, self.y, self.theta)
+
+    def _get_solution(self):
+        """
+        Returns:
+            x_star: Solution.
+            F_star: Function value at solution.
+        """
+        x = cp.Variable(self.dim)
+
+        objective = cp.Minimize(
+            cp.sum(cp.logistic(-cp.multiply(self.y, self.X @ x))) + 0.5 * self.theta * cp.sum_squares(x)
+        )
+
+        constraints = [self.A_hstacked @ x - self.b_sum == 0]
+
+        prob = cp.Problem(objective, constraints)
+        prob.solve()
+
+        x_star = x.value
+        F_star = prob.value
+
+        return x_star, F_star

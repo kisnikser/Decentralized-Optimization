@@ -735,3 +735,91 @@ def Main(num_steps: int,
     }
             
     return output
+
+
+###################################################################################################
+
+
+def EXTRA(num_steps: int, 
+        model: Model, 
+        params: Dict[str, float] = None):
+    """
+    Our main algoritm (see Algorithm 6 in the paper).
+    
+    Args:
+        num_steps: int - Number of optimizer steps.
+        model: Model - Model with oracle, which gives F, grad_F, etc.
+        params: Dict[str, float] = None - Algorithm parameters.
+    Returns:
+        output: Dict[...] - Dictionary with the method results
+    """
+    
+    I_n = np.identity(model.n)
+    # W = model.mixing_matrix
+    W = model.mixing_matrix
+    W_tilde = 0.5 * (I_n + W)
+    
+    # set algorithm parameters
+    params = {} if params is None else params
+    alpha = params.get('alpha', utils.lambda_min(W_tilde) / model.L_f)
+    assert alpha > 0, "The parameter alpha must be greater than 0"
+    assert alpha < 2 * utils.lambda_min(W_tilde) / model.L_f
+
+    # alpha = 1e-5
+
+    # set the initial point
+    x = np.zeros((model.n, model.d))
+    
+    # get CVXPY solution
+    x_star, F_star = model.solution
+    
+    # logging
+    x_err = np.zeros(num_steps) # distance
+    F_err = np.zeros(num_steps) # function error
+    cons_err = np.zeros(num_steps) # constraints error
+    #primal_dual_err = np.zeros(num_steps) # primal-dual optimality condition error
+    
+    ts = []
+    start = time.time()
+    
+    grad_calls = []
+    mults_A = []
+    communications = []
+    
+    def grad_F_EXTRA(x):
+        return model.grad_F(x.reshape(-1)).reshape((model.n, model.d))
+    
+    x_prev = x
+    x = W @ x_prev - alpha * grad_F_EXTRA(x_prev)
+    
+    for i in tqdm(range(num_steps)):
+        
+        x, x_prev = (I_n + W) @ x - W_tilde @ x_prev - alpha * (grad_F_EXTRA(x) - grad_F_EXTRA(x_prev)), x
+        
+        # time
+        end = time.time()
+        ts.append(end - start)
+        
+        # oracles
+        grad_calls.append(1)
+        mults_A.append(1) # ???
+        communications.append(1)
+        
+        # add values to the logs
+        x_f = x.reshape(-1)
+        x_err[i] = np.linalg.norm(x_f - x_star)**2
+        F_err[i] = abs(model.F(x_f) - F_star)
+
+    output = {
+        'x': x_f,
+        'x_err': x_err,
+        'F_err': F_err,
+        #'cons_err': cons_err,
+        #'primal_dual_err': primal_dual_err,
+        'ts': ts,
+        'grad_calls': grad_calls,
+        'mults_A': mults_A,
+        'communications': communications
+    }
+            
+    return output

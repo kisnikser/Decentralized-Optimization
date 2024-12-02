@@ -351,3 +351,44 @@ def plot_comparison_oracles(results):
     plt.suptitle('Comparison', fontsize=24)
     plt.tight_layout()
     plt.show()
+    
+
+#########
+
+
+def generate_matrices_for_condition_number(n, d, condition_number, theta):
+    """
+    Generate matrices C_i to achieve a specific condition number.
+
+    Parameters:
+    - n: Number of blocks.
+    - d: Dimension of each block.
+    - condition_number: Desired condition number.
+    - theta: Regularization parameter.
+
+    Returns:
+    - C_list: List of matrices C_i.
+    """
+    C_list = []
+
+    # Set the eigenvalues to achieve the desired condition number
+    lambda_min = 1 + theta
+    lambda_max = condition_number * (1 + theta)
+
+    for i in range(n):
+        # Generate a random orthogonal matrix U
+        U, _ = np.linalg.qr(np.random.randn(d, d))
+
+        # Set the eigenvalues for C_i^T C_i
+        if i == 0:
+            eigenvalues = np.linspace(lambda_min, lambda_min, d)
+        else:
+            eigenvalues = np.linspace(lambda_max, lambda_max, d)
+
+        # Construct C_i
+        Lambda = np.diag(eigenvalues)
+        C_i = U @ np.sqrt(Lambda)
+
+        C_list.append(C_i)
+
+    return C_list
