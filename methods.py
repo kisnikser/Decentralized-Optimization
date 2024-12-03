@@ -662,6 +662,11 @@ def Main(num_steps: int,
     mu_B = model.mu_A / 2
     L_B = model.L_A + (model.L_A + model.mu_A) * L_W_prime / mu_W_prime
     kappa_B = L_B / mu_B
+
+    print("n W", np.ceil(np.sqrt(model.kappa_W)).astype(int))
+    
+    print("n B", np.ceil(np.sqrt(kappa_B)).astype(int) )
+    
     
     # set algorithm parameters
     params = {} if params is None else params
@@ -793,7 +798,6 @@ def EXTRA(num_steps: int,
     x = W @ x_prev - alpha * grad_F_EXTRA(x_prev)
     
     for i in tqdm(range(num_steps)):
-        
         x, x_prev = (I_n + W) @ x - W_tilde @ x_prev - alpha * (grad_F_EXTRA(x) - grad_F_EXTRA(x_prev)), x
         
         # time

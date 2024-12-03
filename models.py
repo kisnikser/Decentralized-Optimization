@@ -871,7 +871,9 @@ class ConsensusModel(Model):
         self._bCT_bd = None # used in grad_F
         
         # set parameters for constraints
-        gossip_matrix = np.kron(self.W, np.identity(self.d))
+        full_graph_lapl = np.diag(np.ones(self.n) * (self.n)) - np.ones((self.n, self.n))
+        gossip_matrix = np.kron(full_graph_lapl, np.identity(self.d))
+        #gossip_matrix = np.kron(self.W, np.identity(self.d))
         self.A = [gossip_matrix[:, i*d:(i+1)*d] for i in range(self.n)] # A_1, ..., A_n
         self.b = [np.zeros(self.m) for _ in range(self.n)] # b_1, ..., b_n
 

@@ -379,11 +379,7 @@ def generate_matrices_for_condition_number(n, d, condition_number, theta):
         # Generate a random orthogonal matrix U
         U, _ = np.linalg.qr(np.random.randn(d, d))
 
-        # Set the eigenvalues for C_i^T C_i
-        if i == 0:
-            eigenvalues = np.linspace(lambda_min, lambda_min, d)
-        else:
-            eigenvalues = np.linspace(lambda_max, lambda_max, d)
+        eigenvalues = np.linspace(lambda_min, lambda_max, d)
 
         # Construct C_i
         Lambda = np.diag(eigenvalues)
