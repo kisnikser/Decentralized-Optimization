@@ -297,7 +297,7 @@ def plot_primal_oracles(output, title):
 
     ax[1].plot(np.cumsum(output['mults_A']), output['x_err'])
     ax[1].set_yscale('log')
-    ax[1].set_xlabel("Multiplications by $\mathbf{A}$ and $\mathbf{A}^T$")
+    ax[1].set_xlabel("Multiplications by $\\mathbf{A}$ and $\\mathbf{A}^T$")
     ax[1].set_ylabel(r"$\| x^k - x^* \|_2^2$")
 
     ax[2].plot(np.cumsum(output['communications']), output['x_err'])
@@ -333,7 +333,7 @@ def plot_comparison_oracles(results):
     #ax[1].set_xlim(left=0, right=np.cumsum(results['DPMM']['mults_A'])[-1] * 0.5)
     #ax[1].set_ylim(bottom=results['APAPC']['x_err'][-1], top=results['DPMM']['x_err'][0] * 10)
     ax[1].set_yscale('log')
-    ax[1].set_xlabel("Multiplications by $\mathbf{A}$ and $\mathbf{A}^T$")
+    ax[1].set_xlabel("Multiplications by $\\mathbf{A}$ and $\\mathbf{A}^T$")
     ax[1].set_ylabel(r"$\| x^k - x^* \|_2^2$")
 
     for title in results.keys():

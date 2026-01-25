@@ -37,6 +37,7 @@ def TrackingADMM(num_steps: int,
     
     # set variables to the paper notation
     #W = np.kron(model.mixing_matrix, np.identity(model.m))
+    W = model.mixing_matrix
     A_d = model.bA
     
     # set algorithm parameters
@@ -76,8 +77,8 @@ def TrackingADMM(num_steps: int,
         x_prev = x
         #with Timer('get_argmin_TrackingADMM'):
         x, next_grad_calls = get_argmin_TrackingADMM(x_prev, d, lmbd, c, model, A) # + 3 mult A, A^T, +2 communication
-        d = (model.W @ d.reshape((model.n, model.m))).flatten() + A_d @ (x - x_prev) # +1 communication, +1 mult A
-        lmbd = (model.W @ lmbd.reshape((model.n, model.m))).flatten() + c * d # +1 communication
+        d = (W @ d.reshape((model.n, model.m))).flatten() + A_d @ (x - x_prev) # +1 communication, +1 mult A
+        lmbd = (W @ lmbd.reshape((model.n, model.m))).flatten() + c * d # +1 communication
        
         # time 
         end = time.time()
@@ -130,12 +131,13 @@ def get_argmin_TrackingADMM_example(x_k: np.ndarray,
     """
     # set variables to the paper notation
     #W = np.kron(model.mixing_matrix, np.identity(model.m))
+    W = model.mixing_matrix
     A_d = model.bA
     
     b = (
         model.bCT_bd
-        - A_d.T @ (model.W @ lmbd_k.reshape((model.n, model.m))).flatten() # +1 mult A^T, +1 communication
-        + c * A_d.T @ (A_d @ x_k - (model.W @ d_k.reshape((model.n, model.m))).flatten()) # +2 mult A, A^T, +1 communication
+        - A_d.T @ (W @ lmbd_k.reshape((model.n, model.m))).flatten() # +1 mult A^T, +1 communication
+        + c * A_d.T @ (A_d @ x_k - (W @ d_k.reshape((model.n, model.m))).flatten()) # +2 mult A, A^T, +1 communication
     )
     
     x, grad_calls = ConjugateGradientQuadratic(x_k, A, b)
@@ -167,12 +169,13 @@ def get_argmin_TrackingADMM_vfl(x_k: np.ndarray,
     """
     # set variables to the paper notation
     #W = np.kron(model.mixing_matrix, np.identity(model.m))
+    W = model.mixing_matrix
     A_d = model.bA
     
     b = (
         model._rearrange_vector(np.hstack((model.l, np.zeros(model.n * model.d))))
-        - A_d.T @ (model.W @ lmbd_k.reshape((model.n, model.m))).flatten() # +1 mult A^T, +1 communication
-        + c * A_d.T @ (A_d @ x_k - (model.W @ d_k.reshape((model.n, model.m))).flatten()) # +2 mult A, A^T, +1 communication
+        - A_d.T @ (W @ lmbd_k.reshape((model.n, model.m))).flatten() # +1 mult A^T, +1 communication
+        + c * A_d.T @ (A_d @ x_k - (W @ d_k.reshape((model.n, model.m))).flatten()) # +2 mult A, A^T, +1 communication
     )
     
     x, grad_calls = ConjugateGradientQuadratic(x_k, A, b)
